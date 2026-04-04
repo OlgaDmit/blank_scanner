@@ -270,6 +270,30 @@ class BlankOCRApp:
         if not os.path.isdir(new_path):
             messagebox.showerror("Ошибка", f"Папка не существует: {new_path}")
             return False
+
+        # Проверяем наличие .set файла в папке
+        set_files = glob.glob(os.path.join(new_path, "*.set"))
+        if not set_files:
+            # Нет файла .set – предлагаем создать шаблон
+            answer = messagebox.askyesno(
+                "Схема не найдена",
+                f"В папке '{os.path.basename(new_path)}' нет файла схемы (.set).\n\n"
+                "Хотите создать шаблон бланка для этой папки?\n"
+                "После создания шаблона папка будет выбрана автоматически.\n\n"
+                "Нажмите 'Да' для создания шаблона, 'Нет' для отмены выбора папки."
+            )
+            if answer:
+                # Открываем диалог создания шаблона с предустановленной папкой
+                self.open_template_dialog(default_folder=new_path)
+                # После закрытия диалога проверяем, появился ли .set файл
+                set_files = glob.glob(os.path.join(new_path, "*.set"))
+                if not set_files:
+                    messagebox.showwarning("Внимание", "Шаблон не был создан. Папка не выбрана.")
+                    return False
+            else:
+                return False
+
+        # Если дошли сюда – папка подходит (есть .set или пользователь создал)
         self.current_path = new_path
         if self.current_path in self.path_arr:
             self.path_arr.remove(self.current_path)
@@ -278,11 +302,13 @@ class BlankOCRApp:
             self.path_arr = self.path_arr[:10]
         self.update_combo_list()
         self.update_folder_label()
+
+        # Загружаем схему (используем существующую функцию, которая найдёт .set)
         self.blank_scheme = load_blank_scheme(self.current_path)
         if self.blank_scheme is None:
-            messagebox.showerror("Ошибка", f"В папке {self.current_path} нет корректного .set файла.\nВыберите другую папку.")
-            self.blank_scheme = None
+            messagebox.showerror("Ошибка", f"Не удалось загрузить схему из папки {self.current_path}.")
             return False
+
         save_settings(self.path_arr, [self.x, self.y, self.w, self.h], self.sharpness)
         return True
 
@@ -468,14 +494,16 @@ class BlankOCRApp:
         if folder:
             var.set(folder)
 
-    def open_template_dialog(self):
+    def open_template_dialog(self, default_folder=None):
+        """Диалог создания шаблона с автоматическим обновлением баллов и типов."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Создание шаблона бланка")
-        dialog.geometry("950x750")
+        dialog.geometry("1200x900")
+        dialog.minsize(900, 700)
         dialog.transient(self.root)
         dialog.grab_set()
 
-        # Переменные
+        # ----- Переменные -----
         title_var = tk.StringVar(value="ЕГЭ 2026")
         problems_var = tk.IntVar(value=27)
         test_problems_var = tk.IntVar(value=20)
@@ -483,185 +511,269 @@ class BlankOCRApp:
         columns_var = tk.IntVar(value=3)
         problems_in_column_var = tk.IntVar(value=10)
 
-        frame = ttk.Frame(dialog, padding=10)
-        frame.pack(fill=tk.BOTH, expand=True)
+        # Функция пересчёта столбцов
+        def update_columns(*args):
+            problems = problems_var.get()
+            rows = problems_in_column_var.get()
+            if rows > 0:
+                new_cols = (problems + rows - 1) // rows
+                columns_var.set(new_cols)
 
-        row = 0
-        ttk.Label(frame, text="Название экзамена:").grid(row=row, column=0, sticky=tk.W, pady=2)
-        ttk.Entry(frame, textvariable=title_var, width=30).grid(row=row, column=1, pady=2)
-        row += 1
+        problems_var.trace_add('write', update_columns)
+        problems_in_column_var.trace_add('write', update_columns)
 
-        ttk.Label(frame, text="Общее количество заданий:").grid(row=row, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(frame, from_=1, to=100, textvariable=problems_var, width=10).grid(row=row, column=1, sticky=tk.W, pady=2)
-        row += 1
+        # ----- Функции обновления баллов и типов -----
+        def refresh_scores_and_checks():
+            """Обновляет текстовые поля баллов и типов проверки на основе problems и test_problems."""
+            total = problems_var.get()
+            test = test_problems_var.get()
 
-        ttk.Label(frame, text="Заданий в тестовой части:").grid(row=row, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(frame, from_=0, to=100, textvariable=test_problems_var, width=10).grid(row=row, column=1, sticky=tk.W, pady=2)
-        row += 1
-
-        ttk.Label(frame, text="Количество клеток для ответа:").grid(row=row, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(frame, from_=1, to=20, textvariable=fields_number_var, width=10).grid(row=row, column=1, sticky=tk.W, pady=2)
-        row += 1
-
-        ttk.Label(frame, text="Количество столбцов:").grid(row=row, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(frame, from_=1, to=5, textvariable=columns_var, width=10).grid(row=row, column=1, sticky=tk.W, pady=2)
-        row += 1
-
-        ttk.Label(frame, text="Заданий в столбце:").grid(row=row, column=0, sticky=tk.W, pady=2)
-        ttk.Spinbox(frame, from_=1, to=30, textvariable=problems_in_column_var, width=10).grid(row=row, column=1, sticky=tk.W, pady=2)
-        row += 1
-
-        # Баллы
-        ttk.Label(frame, text="Баллы (через запятую):").grid(row=row, column=0, sticky=tk.NW, pady=2)
-        scores_text = tk.Text(frame, height=6, width=30)
-        scores_text.grid(row=row, column=1, pady=2, sticky=tk.W)
-        scores_text.insert(tk.END, "1,1,1,1,2,2,1,1,2,2,1,1,1,2,2,1,2,2,1,1,3,2,2,3,3,3,1")
-        row += 1
-
-        # Типы проверки (вручную)
-        ttk.Label(frame, text="Типы проверки (через запятую, 1/2/3/0):").grid(row=row, column=0, sticky=tk.NW, pady=2)
-        check_keys_entry = ttk.Entry(frame, width=30)
-        check_keys_entry.grid(row=row, column=1, pady=2, sticky=tk.W)
-        row += 1
-
-        # Функция автозаполнения типов по баллам (с учётом test_problems)
-        def auto_fill_check_keys():
+            # Баллы: стараемся сохранить существующие, новые задания получают 2 балла
             try:
-                scores_str = scores_text.get("1.0", tk.END).strip()
-                if not scores_str:
-                    return
-                rates = list(map(int, scores_str.replace(',', ' ').split()))
-                problems = problems_var.get()
-                if len(rates) < problems:
-                    rates += [1] * (problems - len(rates))
-                rates = rates[:problems]
-                test_problems = test_problems_var.get()
-                ck = []
-                for i, r in enumerate(rates):
-                    if i >= test_problems:
-                        ck.append(0)
-                    else:
-                        if r == 1:
-                            ck.append(1)
-                        elif r == 2:
-                            ck.append(2)
-                        elif r >= 3:
-                            ck.append(3)
-                        else:
-                            ck.append(0)
-                check_keys_entry.delete(0, tk.END)
-                check_keys_entry.insert(0, ','.join(map(str, ck)))
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось сгенерировать типы: {e}")
+                current_scores = list(map(int, scores_text.get("1.0", tk.END).strip().replace(',', ' ').split()))
+            except:
+                current_scores = []
+            if len(current_scores) < total:
+                current_scores += [2] * (total - len(current_scores))
+            else:
+                current_scores = current_scores[:total]
 
-        ttk.Button(frame, text="Сгенерировать типы по баллам (тестовая часть → 1/2/3, остальные → 0)",
-                command=auto_fill_check_keys).grid(row=row, column=1, pady=5, sticky=tk.W)
-        row += 1
-
-        # Предпросмотр
-        preview_label = ttk.Label(frame, text="Предпросмотр будет здесь", relief=tk.SUNKEN)
-        preview_label.grid(row=0, column=2, rowspan=row, padx=20, sticky=tk.NSEW)
-        frame.columnconfigure(2, weight=1)
-        frame.rowconfigure(0, weight=1)
-
-        def update_preview():
+            # Типы проверки: существующие сохраняются, новые – 2 для тестовых, 0 для остальных
             try:
-                problems = problems_var.get()
-                test_problems = test_problems_var.get()
+                current_checks = list(map(int, check_text.get("1.0", tk.END).strip().replace(',', ' ').split()))
+            except:
+                current_checks = []
+            if len(current_checks) < total:
+                for i in range(len(current_checks), total):
+                    current_checks.append(2 if i < test else 0)
+            else:
+                current_checks = current_checks[:total]
+
+            # Коррекция типов для заданий, которые изменили статус (тестовое / не тестовое)
+            for i in range(total):
+                if i < test:
+                    if current_checks[i] == 0:
+                        current_checks[i] = 2
+                else:
+                    if current_checks[i] == 2:
+                        current_checks[i] = 0
+
+            # Записываем обратно в текстовые поля
+            scores_text.delete("1.0", tk.END)
+            scores_text.insert(tk.END, ','.join(map(str, current_scores)))
+            check_text.delete("1.0", tk.END)
+            check_text.insert(tk.END, ','.join(map(str, current_checks)))
+
+        def sync_total_and_test(*args):
+            """Синхронизирует общее количество заданий и тестовую часть."""
+            total = problems_var.get()
+            test = test_problems_var.get()
+            changed = False
+            if test > total:
+                problems_var.set(test)
+                changed = True
+            elif total < test:
+                test_problems_var.set(total)
+                changed = True
+            if not changed:
+                refresh_scores_and_checks()
+
+        # Привязываем изменения к переменным
+        problems_var.trace_add('write', lambda *a: (sync_total_and_test(), refresh_scores_and_checks()))
+        test_problems_var.trace_add('write', lambda *a: (sync_total_and_test(), refresh_scores_and_checks()))
+
+        # ----- Верхняя область: предпросмотр (Canvas + Scrollbar) -----
+        preview_frame = ttk.Frame(dialog, relief=tk.SUNKEN, borderwidth=2)
+        preview_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        canvas = tk.Canvas(preview_frame, bg='white', highlightthickness=0)
+        h_scroll = ttk.Scrollbar(preview_frame, orient=tk.HORIZONTAL, command=canvas.xview)
+        v_scroll = ttk.Scrollbar(preview_frame, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(xscrollcommand=h_scroll.set, yscrollcommand=v_scroll.set)
+
+        canvas.grid(row=0, column=0, sticky='nsew')
+        h_scroll.grid(row=1, column=0, sticky='ew')
+        v_scroll.grid(row=0, column=1, sticky='ns')
+        preview_frame.grid_rowconfigure(0, weight=1)
+        preview_frame.grid_columnconfigure(0, weight=1)
+
+        preview_image = None
+
+        def update_preview(event=None):
+            nonlocal preview_image
+            try:
+                total = problems_var.get()
+                test = test_problems_var.get()
                 fields_number = fields_number_var.get()
                 columns = columns_var.get()
-                problems_in_column = problems_in_column_var.get()
+                rows = problems_in_column_var.get()
                 scores_str = scores_text.get("1.0", tk.END).strip()
                 rates = list(map(int, scores_str.replace(',', ' ').split()))
-                if len(rates) < problems:
-                    rates += [1] * (problems - len(rates))
-                rates = rates[:problems]
+                if len(rates) < total:
+                    rates += [1] * (total - len(rates))
+                rates = rates[:total]
 
-                # Парсим check_keys из поля ввода
-                ck_str = check_keys_entry.get().strip()
-                if ck_str:
-                    check_keys = list(map(int, ck_str.replace(',', ' ').split()))
-                    if len(check_keys) < problems:
-                        check_keys += [0] * (problems - len(check_keys))
-                    check_keys = check_keys[:problems]
-                else:
-                    check_keys = None  # будет авто-генерация в generate_custom_template
+                check_str = check_text.get("1.0", tk.END).strip()
+                check_keys = list(map(int, check_str.replace(',', ' ').split()))
+                if len(check_keys) < total:
+                    check_keys += [0] * (total - len(check_keys))
+                check_keys = check_keys[:total]
 
                 temp_path = "temp_preview.png"
                 generate_custom_template(
                     output_path=temp_path,
                     title_text=title_var.get(),
-                    problems=problems,
-                    test_problems=test_problems,
+                    problems=total,
+                    test_problems=test,
                     rates=rates,
                     check_keys=check_keys,
-                    problems_in_column=problems_in_column,
+                    problems_in_column=rows,
                     columns=columns,
                     fields_number=fields_number,
-                    problems_names=[str(i) for i in range(1, problems+1)]
+                    problems_names=[str(i) for i in range(1, total+1)]
                 )
                 img = Image.open(temp_path)
-                img.thumbnail((400, 400))
-                imgtk = ImageTk.PhotoImage(img)
-                preview_label.config(image=imgtk, text="")
-                preview_label.image = imgtk
+                cw = canvas.winfo_width()
+                ch = canvas.winfo_height()
+                if cw > 10 and ch > 10:
+                    img.thumbnail((cw, ch), Image.Resampling.LANCZOS)
+                else:
+                    img.thumbnail((800, 600), Image.Resampling.LANCZOS)
+                preview_image = ImageTk.PhotoImage(img)
+                canvas.delete("all")
+                canvas.create_image(0, 0, anchor='nw', image=preview_image)
+                canvas.config(scrollregion=canvas.bbox('all'))
                 os.remove(temp_path)
             except Exception as e:
-                preview_label.config(text=f"Ошибка: {e}")
+                canvas.delete("all")
+                canvas.create_text(10, 10, anchor='nw', text=f"Ошибка: {e}", fill='red')
 
-        ttk.Button(frame, text="Предпросмотр", command=update_preview).grid(row=row, column=1, pady=5, sticky=tk.W)
+        def on_resize(event):
+            update_preview()
+        canvas.bind('<Configure>', on_resize)
+
+        # ----- Нижняя область: настройки -----
+        settings_frame = ttk.LabelFrame(dialog, text="Параметры шаблона", padding=10)
+        settings_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
+
+        row = 0
+        ttk.Label(settings_frame, text="Название экзамена:").grid(row=row, column=0, sticky=tk.W, pady=2)
+        title_entry = ttk.Entry(settings_frame, textvariable=title_var, width=30)
+        title_entry.grid(row=row, column=1, pady=2)
+        title_entry.bind('<KeyRelease>', lambda e: update_preview())
         row += 1
 
+        ttk.Label(settings_frame, text="Общее количество заданий:").grid(row=row, column=0, sticky=tk.W, pady=2)
+        problems_spin = ttk.Spinbox(settings_frame, from_=1, to=200, textvariable=problems_var, width=10)
+        problems_spin.grid(row=row, column=1, sticky=tk.W, pady=2)
+        problems_spin.bind('<ButtonRelease-1>', lambda e: update_preview())
+        row += 1
+
+        ttk.Label(settings_frame, text="Заданий в тестовой части:").grid(row=row, column=0, sticky=tk.W, pady=2)
+        test_spin = ttk.Spinbox(settings_frame, from_=0, to=200, textvariable=test_problems_var, width=10)
+        test_spin.grid(row=row, column=1, sticky=tk.W, pady=2)
+        test_spin.bind('<ButtonRelease-1>', lambda e: update_preview())
+        row += 1
+
+        ttk.Label(settings_frame, text="Количество клеток для ответа:").grid(row=row, column=0, sticky=tk.W, pady=2)
+        cells_spin = ttk.Spinbox(settings_frame, from_=1, to=20, textvariable=fields_number_var, width=10)
+        cells_spin.grid(row=row, column=1, sticky=tk.W, pady=2)
+        cells_spin.bind('<ButtonRelease-1>', lambda e: update_preview())
+        row += 1
+
+        ttk.Label(settings_frame, text="Количество столбцов (авто):").grid(row=row, column=0, sticky=tk.W, pady=2)
+        cols_spin = ttk.Spinbox(settings_frame, from_=1, to=10, textvariable=columns_var, width=10, state='readonly')
+        cols_spin.grid(row=row, column=1, sticky=tk.W, pady=2)
+        row += 1
+
+        ttk.Label(settings_frame, text="Заданий в столбце:").grid(row=row, column=0, sticky=tk.W, pady=2)
+        rows_spin = ttk.Spinbox(settings_frame, from_=1, to=50, textvariable=problems_in_column_var, width=10)
+        rows_spin.grid(row=row, column=1, sticky=tk.W, pady=2)
+        rows_spin.bind('<ButtonRelease-1>', lambda e: update_preview())
+        row += 1
+
+        # Поле для баллов
+        ttk.Label(settings_frame, text="Баллы за задания (через запятую):").grid(row=row, column=0, sticky=tk.NW, pady=2)
+        scores_text = tk.Text(settings_frame, height=5, width=40)
+        scores_text.grid(row=row, column=1, pady=2, sticky=tk.W)
+        default_rates = "1,1,1,1,2,2,1,1,2,2,1,1,1,2,2,1,2,2,1,1,3,2,2,3,3,3,1"
+        scores_text.insert(tk.END, default_rates)
+        scores_text.bind('<KeyRelease>', lambda e: update_preview())
+        row += 1
+
+        # Поле для типов проверки
+        ttk.Label(settings_frame, text="Типы проверки (через запятую):\n(1-точное,2-таблица,3-множество,0-нет)").grid(row=row, column=0, sticky=tk.NW, pady=2)
+        check_text = tk.Text(settings_frame, height=5, width=40)
+        check_text.grid(row=row, column=1, pady=2, sticky=tk.W)
+        default_check = "1,1,1,1,3,2,1,1,3,2,1,1,1,3,2,1,2,3,1,1,0,0,0,0,0,0,0"
+        check_text.insert(tk.END, default_check)
+        check_text.bind('<KeyRelease>', lambda e: update_preview())
+        row += 1
+
+        # Кнопки
+        btn_frame = ttk.Frame(settings_frame)
+        btn_frame.grid(row=row, column=0, columnspan=2, pady=10)
+
         def do_generate():
+            if default_folder:
+                initial_dir = default_folder
+                initial_file = "blank_template.png"
+            else:
+                initial_dir = self.current_path if self.current_path else ""
+                initial_file = "blank_template.png"
+
             file_path = filedialog.asksaveasfilename(
+                initialdir=initial_dir,
+                initialfile=initial_file,
                 defaultextension=".png",
                 filetypes=[("PNG images", "*.png"), ("All files", "*.*")]
             )
             if not file_path:
                 return
             try:
-                problems = problems_var.get()
-                test_problems = test_problems_var.get()
+                total = problems_var.get()
+                test = test_problems_var.get()
                 fields_number = fields_number_var.get()
                 columns = columns_var.get()
-                problems_in_column = problems_in_column_var.get()
+                rows = problems_in_column_var.get()
                 scores_str = scores_text.get("1.0", tk.END).strip()
                 rates = list(map(int, scores_str.replace(',', ' ').split()))
-                if len(rates) < problems:
-                    rates += [1] * (problems - len(rates))
-                rates = rates[:problems]
+                if len(rates) < total:
+                    rates += [1] * (total - len(rates))
+                rates = rates[:total]
 
-                ck_str = check_keys_entry.get().strip()
-                if ck_str:
-                    check_keys = list(map(int, ck_str.replace(',', ' ').split()))
-                    if len(check_keys) < problems:
-                        check_keys += [0] * (problems - len(check_keys))
-                    check_keys = check_keys[:problems]
-                else:
-                    check_keys = None
+                check_str = check_text.get("1.0", tk.END).strip()
+                check_keys = list(map(int, check_str.replace(',', ' ').split()))
+                if len(check_keys) < total:
+                    check_keys += [0] * (total - len(check_keys))
+                check_keys = check_keys[:total]
 
                 generate_custom_template(
                     output_path=file_path,
                     title_text=title_var.get(),
-                    problems=problems,
-                    test_problems=test_problems,
+                    problems=total,
+                    test_problems=test,
                     rates=rates,
                     check_keys=check_keys,
-                    problems_in_column=problems_in_column,
+                    problems_in_column=rows,
                     columns=columns,
                     fields_number=fields_number,
-                    problems_names=[str(i) for i in range(1, problems+1)]
+                    problems_names=[str(i) for i in range(1, total+1)]
                 )
                 messagebox.showinfo("Успех", f"Шаблон сохранён:\n{file_path}")
+                if default_folder:
+                    self.set_current_path(default_folder)
                 dialog.destroy()
             except Exception as e:
                 messagebox.showerror("Ошибка", str(e))
 
-        button_frame = ttk.Frame(dialog)
-        button_frame.pack(pady=10)
-        ttk.Button(button_frame, text="Сгенерировать", command=do_generate).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Отмена", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Обновить предпросмотр", command=update_preview).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Сгенерировать и сохранить", command=do_generate).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Отмена", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
 
+        # Инициализация (синхронизация и первое обновление)
+        refresh_scores_and_checks()
+        dialog.after(100, update_preview)
     def on_close(self):
         if self.cap:
             self.cap.release()

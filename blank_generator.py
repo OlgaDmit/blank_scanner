@@ -88,32 +88,20 @@ def get_system_font(size, bold=False):
 def generate_custom_template(output_path, title_text="ЕГЭ 2026",
                              problems=27, test_problems=20,
                              rates=None, check_keys=None,
-                             problems_in_column=10, columns=3,
+                             problems_in_column=10, columns=None,
                              fields_number=10, problems_names=None):
-    """
-    Генерирует шаблон бланка ответов и файл схемы с координатами.
-    """
     if rates is None:
         rates = [1] * problems
     if check_keys is None:
-        check_keys = []
-        for i in range(problems):
-            if i < test_problems:
-                rate = rates[i]
-                if rate == 1:
-                    check_keys.append(1)
-                elif rate == 2:
-                    check_keys.append(2)
-                elif rate >= 3:
-                    check_keys.append(3)
-                else:
-                    check_keys.append(0)
-            else:
-                check_keys.append(0) 
+        check_keys = [0] * problems
     if problems_names is None:
         problems_names = [str(i) for i in range(1, problems + 1)]
 
-    # Параметры отрисовки (как в оригинале)
+    # Если columns не задан, вычисляем автоматически
+    if columns is None:
+        columns = (problems + problems_in_column - 1) // problems_in_column
+
+    # Параметры отрисовки
     field_h = 40
     field_w = 36
     margin_h = 30
@@ -128,8 +116,10 @@ def generate_custom_template(output_path, title_text="ЕГЭ 2026",
     interrates_spacing = 150
     marker_size = 50
 
+    # Вычисляем ширину бланка в зависимости от количества столбцов
+    width = margin_left_fields + columns * ((4 + fields_number) * (field_w + margin_w) + intercolumn_spacing) + 200
     height = field_hh * (problems_in_column + 3) + margin_h
-    width = 1900
+
     image = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(image)
 
@@ -137,7 +127,7 @@ def generate_custom_template(output_path, title_text="ЕГЭ 2026",
     roman = get_system_font(field_h, bold=False)
     bold_font = get_system_font(field_h, bold=True)
 
-    # Маркерные квадраты
+    # Маркерные квадраты (по углам)
     markers = [
         (0, 0),
         (width - marker_size, 0),
@@ -164,17 +154,12 @@ def generate_custom_template(output_path, title_text="ЕГЭ 2026",
                width - margin_left_lines + margin_w, field_hh * 2],
               fill=(0, 0, 0), width=2)
 
-    # Подготовим список для записи координат в файл схемы
-    # Формат: для каждого задания (включая вариант) будем записывать:
-    #   problem_x problem_y fields_number rating_x rating_y
-    # Причём для варианта fields_number = 3 (количество клеток)
-    var_place = [width - 5 * field_ww - margin_w, -(margin_h - margin_top), 3]
+    # Список для координат заданий
     scheme_lines = []
-
-    # Сначала добавим вариант
+    var_place = [width - 5 * field_ww - margin_w, -(margin_h - margin_top), 3]
     scheme_lines.append(' '.join(map(str, var_place)))
 
-    # Отрисовка заданий и сбор координат
+    # Отрисовка заданий
     for i in range(columns):
         for j in range(problems_in_column):
             number = i * problems_in_column + j
@@ -184,7 +169,6 @@ def generate_custom_template(output_path, title_text="ЕГЭ 2026",
             yc_number = field_hh * (j + 2) + margin_h
 
             if number < test_problems:
-                # Получаем координаты областей для этого задания
                 boxes_x_cutting, boxes_y_cutting, _, rating_x, rating_y = make_number(
                     draw, [xc_number, yc_number],
                     problems_names[number],
@@ -193,14 +177,9 @@ def generate_custom_template(output_path, title_text="ЕГЭ 2026",
                     fields_number, 4, rates[number],
                     fill=(200, 200, 200), width=2
                 )
-                # В файл схемы записываем: x_cutting, y_cutting, number_of_boxes, rating_x, rating_y
                 scheme_lines.append(f"{boxes_x_cutting} {boxes_y_cutting} {fields_number} {rating_x} {rating_y}")
             else:
-                # Для заданий без клеток (например, сочинение) number_of_boxes = 0
-                # Но make_number с 0 клетками возвращает координаты? Упростим: вызовем с 0 и получим координаты rating
-                # Однако make_number при 0 не рисует клетки, но возвращает [boxes_x_cutting, boxes_y_cutting, 0, rating_x, rating_y]
-                # Чтобы не усложнять, создадим отдельную упрощённую отрисовку
-                # Рисуем только номер и поле для баллов
+                # Задания без клеток
                 text_x_end = xc_number + get_text_size(roman, "00")[0]
                 draw.text((text_x_end, yc_number + field_h * 9 // 10), str(problems_names[number]),
                           font=bold_font, fill=(0, 0, 0, 255), anchor='rs')
@@ -211,10 +190,9 @@ def generate_custom_template(output_path, title_text="ЕГЭ 2026",
                 under_width, _ = get_text_size(roman, "__")
                 draw.text([rating_x + under_width * 11 // 10, rating_y],
                           "/" + str(rates[number]), font=roman, fill=(0, 0, 0, 255), anchor='ls')
-                # Для схемы запишем фиктивные координаты клеток (0)
                 scheme_lines.append(f"{boxes_x} {yc_number - margin_h} 0 {rating_x} {rating_y}")
 
-    # Нижняя черта и итоговые суммы
+    # Нижняя черта
     draw.line([margin_left_lines - margin_w, field_hh * (problems_in_column + 2) + margin_h,
                width - margin_left_lines + margin_w, field_hh * (problems_in_column + 2) + margin_h],
               fill=(0, 0, 0), width=2)
@@ -233,32 +211,23 @@ def generate_custom_template(output_path, title_text="ЕГЭ 2026",
                margin_top + field_hh * (problems_in_column + 2) + margin_h),
               f"Сумма: __ /{total_all}", font=roman, fill=(0, 0, 0, 255), anchor='ra')
 
-    # Сохраняем изображение
     image.save(output_path)
 
-    # Сохраняем файл схемы (расширение .set)
+    # Сохраняем схему
     scheme_path = os.path.splitext(output_path)[0] + ".set"
     with open(scheme_path, 'w', encoding='utf-8') as f:
-        # Первая строка: названия заданий
         f.write(' '.join(problems_names) + '\n')
-        # Вторая строка: баллы
         f.write(' '.join(map(str, rates)) + '\n')
-        # Третья строка: ключи проверки
         f.write(' '.join(map(str, check_keys)) + '\n')
-        # Четвёртая строка: размеры изображения
         f.write(f"{width} {height}\n")
-        # Пятая строка: максимальная площадь маркера
         f.write(str(marker_size * marker_size / width / height) + '\n')
-        # Шестая строка: размеры полей
         f.write(f"{field_w} {field_h} {margin_w} {margin_h}\n")
-        # Седьмая строка: координаты варианта
         f.write(' '.join(map(str, var_place)) + '\n')
-        # Далее координаты заданий
-        for line in scheme_lines[1:]:  # пропускаем вариант, он уже записан
+        for line in scheme_lines[1:]:
             f.write(line + '\n')
 
     print(f"Шаблон сохранён в {output_path}")
-    print(f"Файл схемы сохранён в {scheme_path}")
+    print(f"Файл схемы: {scheme_path}")
     return scheme_path
 
 def generate_answer_sheet_template(output_path):

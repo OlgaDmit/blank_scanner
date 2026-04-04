@@ -92,16 +92,39 @@ def generate_custom_template(output_path, title_text="ЕГЭ 2026",
                              fields_number=10, problems_names=None):
     if rates is None:
         rates = [1] * problems
-    if check_keys is None:
-        check_keys = [0] * problems
     if problems_names is None:
         problems_names = [str(i) for i in range(1, problems + 1)]
 
-    # Если columns не задан, вычисляем автоматически
+    # ----- Гарантированная обработка check_keys -----
+    new_check_keys = [0] * problems
+    if check_keys is not None:
+        temp = list(check_keys)[:problems]
+        for i in range(min(test_problems, problems)):
+            if i < len(temp):
+                new_check_keys[i] = temp[i]
+            else:
+                new_check_keys[i] = 1   # тип проверки по умолчанию для тестовых
+    else:
+        for i in range(test_problems):
+            new_check_keys[i] = 1
+    check_keys = new_check_keys
+    # -----------------------------------------------
+
+    # Количество клеток для каждого задания
+    boxes_per_problem = [fields_number if i < test_problems else 0 for i in range(problems)]
+
+    # Определяем количество столбцов
     if columns is None:
         columns = (problems + problems_in_column - 1) // problems_in_column
 
-    # Параметры отрисовки
+    # Разбивка заданий по столбцам
+    column_indices = []
+    for col in range(columns):
+        start = col * problems_in_column
+        end = min(start + problems_in_column, problems)
+        column_indices.append(list(range(start, end)))
+
+    # Параметры отрисовки (константы)
     field_h = 40
     field_w = 36
     margin_h = 30
@@ -116,81 +139,109 @@ def generate_custom_template(output_path, title_text="ЕГЭ 2026",
     interrates_spacing = 150
     marker_size = 50
 
-    # Вычисляем ширину бланка в зависимости от количества столбцов
-    width = margin_left_fields + columns * ((4 + fields_number) * (field_w + margin_w) + intercolumn_spacing) + 200
+    # Вспомогательная функция для вычисления ширины столбца по максимальному числу клеток
+    def column_width(max_boxes):
+        # Ширина номера (2 цифры) - примерно 2*field_w
+        number_width = 2 * field_w
+        # Ширина клеток: max_boxes клеток + отступы между ними
+        if max_boxes > 0:
+            cells_width = max_boxes * (field_w + margin_w) - margin_w
+        else:
+            cells_width = 0
+        # Ширина поля для балла (прочерк + "/" + число) - примерно 3*field_w
+        score_width = 3 * field_w
+        # Отступы между блоками: номер -> клетки -> балл (2 отступа по margin_w)
+        spacing = 2 * margin_w
+        return number_width + spacing + cells_width + spacing + score_width
+
+    # Вычисляем максимальное количество клеток в каждом столбце
+    max_boxes_per_col = []
+    for indices in column_indices:
+        max_box = max(boxes_per_problem[i] for i in indices) if indices else 0
+        max_boxes_per_col.append(max_box)
+
+    # Ширины столбцов
+    col_widths = [column_width(mb) for mb in max_boxes_per_col]
+
+    # Общая ширина бланка
+    width = (margin_left_fields +
+             sum(col_widths) +
+             intercolumn_spacing * (columns - 1) +
+             margin_left_fields)   # правый отступ
     height = field_hh * (problems_in_column + 3) + margin_h
 
-    image = Image.new("RGB", (width, height), "white")
+    # Создание изображения
+    image = Image.new("RGB", (int(width), int(height)), "white")
     draw = ImageDraw.Draw(image)
 
     # Шрифты
     roman = get_system_font(field_h, bold=False)
     bold_font = get_system_font(field_h, bold=True)
 
-    # Маркерные квадраты (по углам)
+    # Маркерные квадраты
     markers = [
         (0, 0),
         (width - marker_size, 0),
         (0, height - marker_size),
         (width - marker_size, height - marker_size),
     ]
-    for x, y in markers:
-        draw.rectangle([x, y, x + marker_size, y + marker_size], fill="black")
+    for mx, my in markers:
+        draw.rectangle([mx, my, mx + marker_size, my + marker_size], fill="black")
 
     # Заголовки
-    draw.text((margin_left_headers, margin_top), title_text,
-              font=roman, fill=(0, 0, 0, 255))
-    draw.text((width // 2 - 5 * field_h, margin_top), "Бланк ответов №1",
-              font=bold_font, fill=(0, 0, 0, 255))
-    draw.text((width - margin_left_headers - 3 * field_ww - margin_w, margin_top),
-              "Вариант №", font=roman, fill=(0, 0, 0, 255), anchor='ra')
-    draw_boxes(draw,
-               [width - margin_left_headers - 3 * field_ww, margin_top],
-               [field_w, field_h], margin_w, 3, 4,
-               fill=(200, 200, 200), width=2)
-    draw.text((margin_left_headers, margin_top + field_hh),
-              "Фамилия, имя:", font=roman, fill=(0, 0, 0, 255))
+    draw.text((margin_left_headers, margin_top), title_text, font=roman, fill=(0, 0, 0))
+    draw.text((width // 2 - 5 * field_h, margin_top), "Бланк ответов №1", font=bold_font, fill=(0, 0, 0))
+    # Поле варианта
+    var_field_width = 3 * (field_w + margin_w) - margin_w
+    var_x = width - margin_left_headers - var_field_width
+    draw.text((var_x - margin_w, margin_top), "Вариант №", font=roman, fill=(0, 0, 0), anchor='ra')
+    draw_boxes(draw, [var_x, margin_top], [field_w, field_h], margin_w, 3, 4, fill=(200, 200, 200), width=2)
+    var_place = [var_x - 2 * margin_w, -(margin_h - margin_top), 3]
+
+    # Фамилия, имя
+    draw.text((margin_left_headers, margin_top + field_hh), "Фамилия, имя:", font=roman, fill=(0, 0, 0))
     draw.line([margin_left_lines - margin_w, field_hh * 2,
-               width - margin_left_lines + margin_w, field_hh * 2],
-              fill=(0, 0, 0), width=2)
+               width - margin_left_lines + margin_w, field_hh * 2], fill=(0, 0, 0), width=2)
 
-    # Список для координат заданий
+    # Координаты X для каждого столбца
+    col_x = []
+    current_x = margin_left_fields
+    for cw in col_widths:
+        col_x.append(int(current_x))
+        current_x += cw + intercolumn_spacing
+
     scheme_lines = []
-    var_place = [width - 5 * field_ww - margin_w, -(margin_h - margin_top), 3]
-    scheme_lines.append(' '.join(map(str, var_place)))
-
     # Отрисовка заданий
-    for i in range(columns):
-        for j in range(problems_in_column):
-            number = i * problems_in_column + j
-            if number >= problems:
+    for col in range(columns):
+        for row, prob_idx in enumerate(column_indices[col]):
+            if prob_idx >= problems:
                 break
-            xc_number = margin_left_fields + i * ((4 + fields_number) * (field_w + margin_w) + intercolumn_spacing)
-            yc_number = field_hh * (j + 2) + margin_h
-
-            if number < test_problems:
+            y = int(field_hh * (row + 2) + margin_h)
+            x0 = col_x[col]
+            num_boxes = boxes_per_problem[prob_idx]
+            if prob_idx < test_problems:
+                # Задания с клетками
                 boxes_x_cutting, boxes_y_cutting, _, rating_x, rating_y = make_number(
-                    draw, [xc_number, yc_number],
-                    problems_names[number],
-                    [roman, bold_font],
-                    [field_w, field_h], [margin_w, margin_h],
-                    fields_number, 4, rates[number],
+                    draw, [x0, y], problems_names[prob_idx],
+                    [roman, bold_font], [field_w, field_h], [margin_w, margin_h],
+                    num_boxes, 4, rates[prob_idx],
                     fill=(200, 200, 200), width=2
                 )
-                scheme_lines.append(f"{boxes_x_cutting} {boxes_y_cutting} {fields_number} {rating_x} {rating_y}")
+                scheme_lines.append(f"{boxes_x_cutting} {boxes_y_cutting} {num_boxes} {rating_x} {rating_y}")
             else:
-                # Задания без клеток
-                text_x_end = xc_number + get_text_size(roman, "00")[0]
-                draw.text((text_x_end, yc_number + field_h * 9 // 10), str(problems_names[number]),
-                          font=bold_font, fill=(0, 0, 0, 255), anchor='rs')
+                # Задания без клеток (только номер и балл)
+                text_width, _ = get_text_size(roman, "00")
+                text_x_end = x0 + text_width
+                draw.text((text_x_end, y + field_h * 9 // 10), str(problems_names[prob_idx]),
+                          font=bold_font, fill=(0, 0, 0), anchor='rs')
                 boxes_x = text_x_end + 2 * margin_w
-                rating_x = boxes_x
-                rating_y = yc_number + field_h * 9 // 10
-                draw.text([rating_x, rating_y], "__", font=roman, fill=(0, 0, 0, 255), anchor='ls')
+                rating_x = int(boxes_x)
+                rating_y = int(y + field_h * 9 // 10)
+                draw.text([rating_x, rating_y], "__", font=roman, fill=(0, 0, 0), anchor='ls')
                 under_width, _ = get_text_size(roman, "__")
                 draw.text([rating_x + under_width * 11 // 10, rating_y],
-                          "/" + str(rates[number]), font=roman, fill=(0, 0, 0, 255), anchor='ls')
-                scheme_lines.append(f"{boxes_x} {yc_number - margin_h} 0 {rating_x} {rating_y}")
+                          f"/{rates[prob_idx]}", font=roman, fill=(0, 0, 0), anchor='ls')
+                scheme_lines.append(f"{int(boxes_x)} {int(y - margin_h)} 0 {rating_x} {rating_y}")
 
     # Нижняя черта
     draw.line([margin_left_lines - margin_w, field_hh * (problems_in_column + 2) + margin_h,
@@ -202,28 +253,33 @@ def generate_custom_template(output_path, title_text="ЕГЭ 2026",
     total_all = total_test + total_part2
 
     draw.text((margin_left_headers, margin_top + field_hh * (problems_in_column + 2) + margin_h),
-              f"Тест: __ /{total_test}", font=roman, fill=(0, 0, 0, 255))
+              f"Тест: __ /{total_test}", font=roman, fill=(0, 0, 0))
     test_width, _ = get_text_size(roman, "Тест: __ /000")
     draw.text((margin_left_headers + test_width + interrates_spacing,
                margin_top + field_hh * (problems_in_column + 2) + margin_h),
-              f"II часть: __ /{total_part2}", font=roman, fill=(0, 0, 0, 255))
+              f"II часть: __ /{total_part2}", font=roman, fill=(0, 0, 0))
     draw.text((width - margin_left_headers,
                margin_top + field_hh * (problems_in_column + 2) + margin_h),
-              f"Сумма: __ /{total_all}", font=roman, fill=(0, 0, 0, 255), anchor='ra')
+              f"Сумма: __ /{total_all}", font=roman, fill=(0, 0, 0), anchor='ra')
 
     image.save(output_path)
+
+    # Сохраняем схему
+    final_check_keys = list(check_keys)[:problems]  # обрезаем
+    for i in range(test_problems, problems):
+        final_check_keys[i] = 0
 
     # Сохраняем схему
     scheme_path = os.path.splitext(output_path)[0] + ".set"
     with open(scheme_path, 'w', encoding='utf-8') as f:
         f.write(' '.join(problems_names) + '\n')
         f.write(' '.join(map(str, rates)) + '\n')
-        f.write(' '.join(map(str, check_keys)) + '\n')
-        f.write(f"{width} {height}\n")
+        f.write(' '.join(map(str, final_check_keys)) + '\n')   # исправленный список
+        f.write(f"{int(width)} {int(height)}\n")
         f.write(str(marker_size * marker_size / width / height) + '\n')
         f.write(f"{field_w} {field_h} {margin_w} {margin_h}\n")
         f.write(' '.join(map(str, var_place)) + '\n')
-        for line in scheme_lines[1:]:
+        for line in scheme_lines:
             f.write(line + '\n')
 
     print(f"Шаблон сохранён в {output_path}")

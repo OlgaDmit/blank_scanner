@@ -14,6 +14,145 @@ from process_frame import process_frame
 from blank_reader import print_score_on_blank
 from blank_generator import generate_custom_template
 
+TEMPLATES_STORAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates_storage")
+TEMPLATES_INDEX = os.path.join(TEMPLATES_STORAGE, "templates_index.json")
+
+# Создаём папку для хранения шаблонов, если её нет
+os.makedirs(TEMPLATES_STORAGE, exist_ok=True)
+
+# ----------------------------------------------------------------------
+#  ФУНКЦИИ ДЛЯ РАБОТЫ С ХРАНИЛИЩЕМ ШАБЛОНОВ (ВСТАВИТЬ СЮДА)
+# ----------------------------------------------------------------------
+def save_template_to_storage(template_path, template_name=None):
+    """Сохраняет шаблон во внутреннее хранилище и возвращает его ID."""
+    try:
+        # Если имя не указано, запрашиваем у пользователя
+        if not template_name:
+            from tkinter import simpledialog
+            template_name = simpledialog.askstring(
+                "Название шаблона",
+                "Введите название для шаблона (например: ЕГЭ 2026 профиль):",
+                parent=tk._default_root
+            )
+            if not template_name:
+                template_name = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Копируем .png и .set файлы в хранилище
+        png_file = template_path
+        set_file = os.path.splitext(template_path)[0] + ".set"
+        
+        if not os.path.exists(png_file) or not os.path.exists(set_file):
+            print(f"Ошибка: файлы шаблона не найдены: {png_file}, {set_file}")
+            return None
+        
+        # Создаём папку для этого шаблона в хранилище (используем имя с временной меткой)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_name = template_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+        folder_name = f"{safe_name}_{timestamp}"
+        template_folder = os.path.join(TEMPLATES_STORAGE, folder_name)
+        os.makedirs(template_folder, exist_ok=True)
+        
+        # Копируем файлы
+        import shutil
+        dest_png = os.path.join(template_folder, "blank.png")
+        dest_set = os.path.join(template_folder, "blank.set")
+        
+        shutil.copy2(png_file, dest_png)
+        shutil.copy2(set_file, dest_set)
+        
+        # Обновляем индекс
+        index = load_templates_index()
+        template_id = folder_name
+        index[template_id] = {
+            "name": template_name,
+            "folder": folder_name,
+            "path": template_folder,
+            "created": datetime.now().isoformat(),
+            "original_path": template_path
+        }
+        save_templates_index(index)
+        
+        return template_id
+    except Exception as e:
+        print(f"Ошибка сохранения шаблона в хранилище: {e}")
+        return None
+
+def copy_template_to_work_folder(template_id, target_folder):
+    """Копирует шаблон из хранилища в указанную рабочую папку."""
+    index = load_templates_index()
+    if template_id not in index:
+        return False, "Шаблон не найден"
+    
+    template_info = index[template_id]
+    source_folder = template_info["path"]
+    
+    source_png = os.path.join(source_folder, "blank.png")
+    source_set = os.path.join(source_folder, "blank.set")
+    
+    if not os.path.exists(source_png) or not os.path.exists(source_set):
+        return False, "Файлы шаблона повреждены"
+    
+    import shutil
+    # Копируем в целевую папку
+    dest_png = os.path.join(target_folder, "blank_template.png")
+    dest_set = os.path.join(target_folder, os.path.basename(source_set))
+    
+    shutil.copy2(source_png, dest_png)
+    shutil.copy2(source_set, dest_set)
+    
+    return True, "Шаблон скопирован успешно"
+def load_templates_index():
+    """Загружает индекс всех сохранённых шаблонов."""
+    if os.path.exists(TEMPLATES_INDEX):
+        try:
+            with open(TEMPLATES_INDEX, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_templates_index(index):
+    """Сохраняет индекс шаблонов."""
+    try:
+        with open(TEMPLATES_INDEX, 'w', encoding='utf-8') as f:
+            json.dump(index, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"Ошибка сохранения индекса шаблонов: {e}")
+
+def get_recent_templates(limit=10):
+    """Возвращает список недавних шаблонов."""
+    index = load_templates_index()
+    # Сортируем по дате создания (новые сначала)
+    sorted_templates = sorted(
+        index.items(),
+        key=lambda x: x[1].get("created", ""),
+        reverse=True
+    )
+    return sorted_templates[:limit]
+
+def load_template_from_storage(template_id):
+    """Загружает шаблон из хранилища по ID."""
+    index = load_templates_index()
+    if template_id not in index:
+        return None
+    template_info = index[template_id]
+    set_file = os.path.join(template_info["path"], "blank.set")
+    if os.path.exists(set_file):
+        return load_blank_scheme(template_info["path"])
+    return None
+
+def delete_template_from_storage(template_id):
+    """Удаляет шаблон из хранилища."""
+    index = load_templates_index()
+    if template_id in index:
+        import shutil
+        template_path = index[template_id]["path"]
+        if os.path.exists(template_path):
+            shutil.rmtree(template_path)
+        del index[template_id]
+        save_templates_index(index)
+        return True
+    return False
 # ----------------------------------------------------------------------
 #  функции сохранения / масштабирования (без изменений)
 # ----------------------------------------------------------------------
@@ -271,29 +410,45 @@ class BlankOCRApp:
             messagebox.showerror("Ошибка", f"Папка не существует: {new_path}")
             return False
 
-        # Проверяем наличие .set файла в папке
+        # Ищем файлы .set в папке
         set_files = glob.glob(os.path.join(new_path, "*.set"))
+        
         if not set_files:
-            # Нет файла .set – предлагаем создать шаблон
-            answer = messagebox.askyesno(
+            # Спрашиваем, что делать
+            answer = messagebox.askyesnocancel(
                 "Схема не найдена",
                 f"В папке '{os.path.basename(new_path)}' нет файла схемы (.set).\n\n"
-                "Хотите создать шаблон бланка для этой папки?\n"
-                "После создания шаблона папка будет выбрана автоматически.\n\n"
-                "Нажмите 'Да' для создания шаблона, 'Нет' для отмены выбора папки."
+                "Что вы хотите сделать?\n\n"
+                "• Да — создать новый шаблон бланка\n"
+                "• Нет — указать существующий файл схемы\n"
+                "• Отмена — отменить выбор папки"
             )
-            if answer:
-                # Открываем диалог создания шаблона с предустановленной папкой
+            
+            if answer is None:  # Отмена
+                return False
+            elif answer:  # Да — создать новый шаблон
                 self.open_template_dialog(default_folder=new_path)
-                # После закрытия диалога проверяем, появился ли .set файл
+                # После создания шаблона проверяем, появился ли .set файл
                 set_files = glob.glob(os.path.join(new_path, "*.set"))
                 if not set_files:
                     messagebox.showwarning("Внимание", "Шаблон не был создан. Папка не выбрана.")
                     return False
-            else:
-                return False
-
-        # Если дошли сюда – папка подходит (есть .set или пользователь создал)
+            else:  # Нет — выбрать существующий файл .set
+                set_file = filedialog.askopenfilename(
+                    title="Выберите файл схемы (.set)",
+                    initialdir=new_path,
+                    filetypes=[("Файлы схемы", "*.set"), ("Все файлы", "*.*")]
+                )
+                if not set_file:
+                    return False
+                # Копируем в папку для единообразия
+                import shutil
+                target = os.path.join(new_path, os.path.basename(set_file))
+                if set_file != target:
+                    shutil.copy2(set_file, target)
+                set_files = [target]
+        
+        # Если дошли сюда – папка подходит (есть .set)
         self.current_path = new_path
         if self.current_path in self.path_arr:
             self.path_arr.remove(self.current_path)
@@ -303,7 +458,7 @@ class BlankOCRApp:
         self.update_combo_list()
         self.update_folder_label()
 
-        # Загружаем схему (используем существующую функцию, которая найдёт .set)
+        # Загружаем схему
         self.blank_scheme = load_blank_scheme(self.current_path)
         if self.blank_scheme is None:
             messagebox.showerror("Ошибка", f"Не удалось загрузить схему из папки {self.current_path}.")
@@ -332,9 +487,81 @@ class BlankOCRApp:
                 self.choose_folder_dialog()
 
     def choose_folder_dialog(self):
-        new_path = filedialog.askdirectory(title="Выберите рабочую папку")
-        if new_path:
-            self.set_current_path(new_path)
+    # Сначала спрашиваем, хочет ли пользователь выбрать из сохранённых шаблонов
+        answer = messagebox.askyesnocancel(
+            "Выбор рабочей папки",
+            "Как вы хотите выбрать рабочую папку?\n\n"
+            "• Да — выбрать шаблон из библиотеки и создать для него папку\n"
+            "• Нет — выбрать существующую папку с бланками\n"
+            "• Отмена — отменить"
+        )
+        
+        if answer is None:
+            return
+        elif answer:
+            # Выбор из сохранённых шаблонов
+            recent = get_recent_templates()
+            if not recent:
+                messagebox.showinfo("Нет шаблонов", "У вас пока нет сохранённых шаблонов.\nСначала создайте шаблон.")
+                return
+            
+            select_win = tk.Toplevel(self.root)
+            select_win.title("Выбор шаблона из библиотеки")
+            select_win.geometry("500x450")
+            select_win.transient(self.root)
+            select_win.grab_set()
+            
+            tk.Label(select_win, text="Выберите шаблон:", font=("Arial", 12)).pack(pady=10)
+            
+            frame = ttk.Frame(select_win)
+            frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            scrollbar = ttk.Scrollbar(frame)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            
+            listbox = tk.Listbox(frame, yscrollcommand=scrollbar.set, font=("Arial", 10), height=10)
+            listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar.config(command=listbox.yview)
+            
+            # Храним соответствие между отображаемым текстом и ID
+            template_map = {}
+            for template_id, info in recent:
+                created = info.get("created", "Unknown")[:19]
+                display_text = f"{info['name']} (создан: {created})"
+                listbox.insert(tk.END, display_text)
+                template_map[display_text] = template_id
+            
+            def on_select():
+                selection = listbox.curselection()
+                if not selection:
+                    return
+                display_text = listbox.get(selection[0])
+                template_id = template_map[display_text]
+                
+                # Спрашиваем, куда скопировать шаблон
+                target_folder = filedialog.askdirectory(
+                    title="Выберите папку для создания рабочей области с этим шаблоном"
+                )
+                if not target_folder:
+                    return
+                
+                # Копируем шаблон в выбранную папку
+                success, msg = copy_template_to_work_folder(template_id, target_folder)
+                if success:
+                    messagebox.showinfo("Успех", f"Шаблон скопирован в папку:\n{target_folder}")
+                    # Устанавливаем эту папку как рабочую
+                    self.set_current_path(target_folder)
+                    select_win.destroy()
+                else:
+                    messagebox.showerror("Ошибка", msg)
+            
+            ttk.Button(select_win, text="Выбрать и скопировать в новую папку", command=on_select).pack(pady=10)
+            ttk.Button(select_win, text="Отмена", command=select_win.destroy).pack(pady=5)
+        else:
+            # Обычный выбор папки
+            new_path = filedialog.askdirectory(title="Выберите рабочую папку с бланками")
+            if new_path:
+                self.set_current_path(new_path)
 
     def update_video(self):
         ret, frame = self.cap.read()
@@ -371,8 +598,40 @@ class BlankOCRApp:
             self.last_score = score
             self.save_btn.config(state=tk.NORMAL)
             save_result(score)
-            msg = "\n".join(f"{i+1}: {p[0]} {'+' if p[1] else '-'}" for i, p in enumerate(score))
-            messagebox.showinfo("Результат", f"Распознано {len(score)} заданий.\n\n" + msg)
+            
+            # Создаём окно с результатами
+            result_win = tk.Toplevel(self.root)
+            result_win.title("Результаты распознавания")
+            result_win.geometry("400x500")
+            result_win.transient(self.root)
+            result_win.grab_set()
+            
+            def on_esc(event):
+                result_win.destroy()
+            
+            result_win.bind('<Escape>', on_esc)
+            result_win.focus_set()
+            
+            # Текст с результатами
+            text_widget = tk.Text(result_win, wrap=tk.WORD, font=("Courier", 10))
+            text_widget.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            scrollbar = ttk.Scrollbar(text_widget)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            text_widget.config(yscrollcommand=scrollbar.set)
+            scrollbar.config(command=text_widget.yview)
+            
+            msg = f"Распознано {len(score)} заданий\n\n"
+            for i, (points, is_correct) in enumerate(score, 1):
+                status = "+" if is_correct else "-"
+                msg += f"{i:2d}: {points} {status}\n"
+            
+            text_widget.insert(tk.END, msg)
+            text_widget.config(state=tk.DISABLED)
+            
+            # Кнопка закрытия
+            close_btn = ttk.Button(result_win, text="Закрыть (ESC)", command=result_win.destroy)
+            close_btn.pack(pady=10)
         else:
             messagebox.showwarning("Результат", "Ничего не распознано.")
 
@@ -495,7 +754,7 @@ class BlankOCRApp:
             var.set(folder)
 
     def open_template_dialog(self, default_folder=None):
-        """Диалог создания шаблона с автоматическим обновлением баллов и типов."""
+        """Диалог создания шаблона с табличным редактором названий заданий."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Создание шаблона бланка")
         dialog.geometry("1200x900")
@@ -505,30 +764,72 @@ class BlankOCRApp:
 
         # ----- Переменные -----
         title_var = tk.StringVar(value="ЕГЭ 2026")
-        problems_var = tk.IntVar(value=27)
-        test_problems_var = tk.IntVar(value=20)
+        problems_var = tk.StringVar(value="27")
+        test_problems_var = tk.StringVar(value="20")
         fields_number_var = tk.IntVar(value=10)
         columns_var = tk.IntVar(value=3)
         problems_in_column_var = tk.IntVar(value=10)
 
+        # Валидация
+        def validate_int(value):
+            return value == "" or (value.isdigit() and int(value) >= 1)
+        vcmd = (dialog.register(lambda p: validate_int(p)), '%P')
+
         # Функция пересчёта столбцов
         def update_columns(*args):
-            problems = problems_var.get()
-            rows = problems_in_column_var.get()
-            if rows > 0:
-                new_cols = (problems + rows - 1) // rows
-                columns_var.set(new_cols)
+            problems_str = problems_var.get().strip()
+            if not problems_str:
+                return
+            try:
+                problems = int(problems_str)
+                rows = problems_in_column_var.get()
+                if rows > 0:
+                    new_cols = (problems + rows - 1) // rows
+                    columns_var.set(new_cols)
+            except:
+                pass
 
         problems_var.trace_add('write', update_columns)
         problems_in_column_var.trace_add('write', update_columns)
 
-        # ----- Функции обновления баллов и типов -----
-        def refresh_scores_and_checks():
-            """Обновляет текстовые поля баллов и типов проверки на основе problems и test_problems."""
-            total = problems_var.get()
-            test = test_problems_var.get()
+        # Обновление полей
+        def update_names_field():
+            total_str = problems_var.get().strip()
+            if not total_str:
+                return
+            try:
+                total = int(total_str)
+            except:
+                return
+            current_text = names_text.get("1.0", tk.END).strip()
+            parts = [p.strip() for p in current_text.split(',') if p.strip()]
+            name_dict = {}
+            for idx, name in enumerate(parts, start=1):
+                if idx <= total:
+                    name_dict[idx] = name
+            new_names = []
+            for i in range(1, total + 1):
+                if i in name_dict:
+                    new_names.append(name_dict[i])
+                else:
+                    new_names.append(str(i))
+            names_text.delete("1.0", tk.END)
+            names_text.insert(tk.END, ', '.join(new_names))
 
-            # Баллы: стараемся сохранить существующие, новые задания получают 2 балла
+        def refresh_scores_and_checks():
+            total_str = problems_var.get().strip()
+            if not total_str:
+                return
+            try:
+                total = int(total_str)
+            except:
+                return
+            test_str = test_problems_var.get().strip()
+            test = int(test_str) if test_str else 0
+            if test > total:
+                test = total
+                test_problems_var.set(str(test))
+
             try:
                 current_scores = list(map(int, scores_text.get("1.0", tk.END).strip().replace(',', ' ').split()))
             except:
@@ -538,7 +839,6 @@ class BlankOCRApp:
             else:
                 current_scores = current_scores[:total]
 
-            # Типы проверки: существующие сохраняются, новые – 2 для тестовых, 0 для остальных
             try:
                 current_checks = list(map(int, check_text.get("1.0", tk.END).strip().replace(',', ' ').split()))
             except:
@@ -549,7 +849,6 @@ class BlankOCRApp:
             else:
                 current_checks = current_checks[:total]
 
-            # Коррекция типов для заданий, которые изменили статус (тестовое / не тестовое)
             for i in range(total):
                 if i < test:
                     if current_checks[i] == 0:
@@ -558,39 +857,39 @@ class BlankOCRApp:
                     if current_checks[i] == 2:
                         current_checks[i] = 0
 
-            # Записываем обратно в текстовые поля
             scores_text.delete("1.0", tk.END)
             scores_text.insert(tk.END, ','.join(map(str, current_scores)))
             check_text.delete("1.0", tk.END)
             check_text.insert(tk.END, ','.join(map(str, current_checks)))
+            update_names_field()
 
         def sync_total_and_test(*args):
-            """Синхронизирует общее количество заданий и тестовую часть."""
-            total = problems_var.get()
-            test = test_problems_var.get()
-            changed = False
+            total_str = problems_var.get().strip()
+            test_str = test_problems_var.get().strip()
+            if not total_str or not test_str:
+                return
+            try:
+                total = int(total_str)
+                test = int(test_str)
+            except:
+                return
             if test > total:
-                problems_var.set(test)
-                changed = True
+                test_problems_var.set(str(total))
             elif total < test:
-                test_problems_var.set(total)
-                changed = True
-            if not changed:
-                refresh_scores_and_checks()
+                problems_var.set(str(test))
+            refresh_scores_and_checks()
 
-        # Привязываем изменения к переменным
-        problems_var.trace_add('write', lambda *a: (sync_total_and_test(), refresh_scores_and_checks()))
-        test_problems_var.trace_add('write', lambda *a: (sync_total_and_test(), refresh_scores_and_checks()))
+        problems_var.trace_add('write', lambda *a: (sync_total_and_test(), update_names_field()))
+        test_problems_var.trace_add('write', sync_total_and_test)
 
-        # ----- Верхняя область: предпросмотр (Canvas + Scrollbar) -----
-        preview_frame = ttk.Frame(dialog, relief=tk.SUNKEN, borderwidth=2)
-        preview_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # ----- ПРЕДПРОСМОТР -----
+        preview_frame = ttk.LabelFrame(dialog, text="Предпросмотр")
+        preview_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=5)
 
         canvas = tk.Canvas(preview_frame, bg='white', highlightthickness=0)
         h_scroll = ttk.Scrollbar(preview_frame, orient=tk.HORIZONTAL, command=canvas.xview)
         v_scroll = ttk.Scrollbar(preview_frame, orient=tk.VERTICAL, command=canvas.yview)
         canvas.configure(xscrollcommand=h_scroll.set, yscrollcommand=v_scroll.set)
-
         canvas.grid(row=0, column=0, sticky='nsew')
         h_scroll.grid(row=1, column=0, sticky='ew')
         v_scroll.grid(row=0, column=1, sticky='ns')
@@ -601,25 +900,39 @@ class BlankOCRApp:
 
         def update_preview(event=None):
             nonlocal preview_image
+            total_str = problems_var.get().strip()
+            test_str = test_problems_var.get().strip()
+            if not total_str or not test_str:
+                canvas.delete("all")
+                canvas.create_text(10, 10, anchor='nw', text="Введите количество заданий", fill='red')
+                return
             try:
-                total = problems_var.get()
-                test = test_problems_var.get()
-                fields_number = fields_number_var.get()
-                columns = columns_var.get()
-                rows = problems_in_column_var.get()
-                scores_str = scores_text.get("1.0", tk.END).strip()
-                rates = list(map(int, scores_str.replace(',', ' ').split()))
-                if len(rates) < total:
-                    rates += [1] * (total - len(rates))
-                rates = rates[:total]
+                total = int(total_str)
+                test = int(test_str)
+            except:
+                return
+            fields_number = fields_number_var.get()
+            columns = columns_var.get()
+            rows = problems_in_column_var.get()
+            scores_str = scores_text.get("1.0", tk.END).strip()
+            rates = list(map(int, scores_str.replace(',', ' ').split()))
+            if len(rates) < total:
+                rates += [1] * (total - len(rates))
+            rates = rates[:total]
+            check_str = check_text.get("1.0", tk.END).strip()
+            check_keys = list(map(int, check_str.replace(',', ' ').split()))
+            if len(check_keys) < total:
+                check_keys += [0] * (total - len(check_keys))
+            check_keys = check_keys[:total]
 
-                check_str = check_text.get("1.0", tk.END).strip()
-                check_keys = list(map(int, check_str.replace(',', ' ').split()))
-                if len(check_keys) < total:
-                    check_keys += [0] * (total - len(check_keys))
-                check_keys = check_keys[:total]
+            names_str = names_text.get("1.0", tk.END).strip()
+            problems_names = [n.strip() for n in names_str.split(',') if n.strip()]
+            if len(problems_names) < total:
+                problems_names += [str(i) for i in range(len(problems_names)+1, total+1)]
+            problems_names = problems_names[:total]
 
-                temp_path = "temp_preview.png"
+            temp_path = "temp_preview.png"
+            try:
                 generate_custom_template(
                     output_path=temp_path,
                     title_text=title_var.get(),
@@ -630,7 +943,7 @@ class BlankOCRApp:
                     problems_in_column=rows,
                     columns=columns,
                     fields_number=fields_number,
-                    problems_names=[str(i) for i in range(1, total+1)]
+                    problems_names=problems_names
                 )
                 img = Image.open(temp_path)
                 cw = canvas.winfo_width()
@@ -648,11 +961,9 @@ class BlankOCRApp:
                 canvas.delete("all")
                 canvas.create_text(10, 10, anchor='nw', text=f"Ошибка: {e}", fill='red')
 
-        def on_resize(event):
-            update_preview()
-        canvas.bind('<Configure>', on_resize)
+        canvas.bind('<Configure>', lambda e: update_preview())
 
-        # ----- Нижняя область: настройки -----
+        # ----- ПАНЕЛЬ НАСТРОЕК -----
         settings_frame = ttk.LabelFrame(dialog, text="Параметры шаблона", padding=10)
         settings_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
 
@@ -664,15 +975,15 @@ class BlankOCRApp:
         row += 1
 
         ttk.Label(settings_frame, text="Общее количество заданий:").grid(row=row, column=0, sticky=tk.W, pady=2)
-        problems_spin = ttk.Spinbox(settings_frame, from_=1, to=200, textvariable=problems_var, width=10)
-        problems_spin.grid(row=row, column=1, sticky=tk.W, pady=2)
-        problems_spin.bind('<ButtonRelease-1>', lambda e: update_preview())
+        problems_entry = tk.Entry(settings_frame, textvariable=problems_var, validate='key', validatecommand=vcmd, width=10)
+        problems_entry.grid(row=row, column=1, sticky=tk.W, pady=2)
+        problems_entry.bind('<KeyRelease>', lambda e: (update_names_field(), update_preview()))
         row += 1
 
         ttk.Label(settings_frame, text="Заданий в тестовой части:").grid(row=row, column=0, sticky=tk.W, pady=2)
-        test_spin = ttk.Spinbox(settings_frame, from_=0, to=200, textvariable=test_problems_var, width=10)
-        test_spin.grid(row=row, column=1, sticky=tk.W, pady=2)
-        test_spin.bind('<ButtonRelease-1>', lambda e: update_preview())
+        test_entry = tk.Entry(settings_frame, textvariable=test_problems_var, validate='key', validatecommand=vcmd, width=10)
+        test_entry.grid(row=row, column=1, sticky=tk.W, pady=2)
+        test_entry.bind('<KeyRelease>', lambda e: update_preview())
         row += 1
 
         ttk.Label(settings_frame, text="Количество клеток для ответа:").grid(row=row, column=0, sticky=tk.W, pady=2)
@@ -692,7 +1003,6 @@ class BlankOCRApp:
         rows_spin.bind('<ButtonRelease-1>', lambda e: update_preview())
         row += 1
 
-        # Поле для баллов
         ttk.Label(settings_frame, text="Баллы за задания (через запятую):").grid(row=row, column=0, sticky=tk.NW, pady=2)
         scores_text = tk.Text(settings_frame, height=5, width=40)
         scores_text.grid(row=row, column=1, pady=2, sticky=tk.W)
@@ -701,7 +1011,6 @@ class BlankOCRApp:
         scores_text.bind('<KeyRelease>', lambda e: update_preview())
         row += 1
 
-        # Поле для типов проверки
         ttk.Label(settings_frame, text="Типы проверки (через запятую):\n(1-точное,2-таблица,3-множество,0-нет)").grid(row=row, column=0, sticky=tk.NW, pady=2)
         check_text = tk.Text(settings_frame, height=5, width=40)
         check_text.grid(row=row, column=1, pady=2, sticky=tk.W)
@@ -710,11 +1019,160 @@ class BlankOCRApp:
         check_text.bind('<KeyRelease>', lambda e: update_preview())
         row += 1
 
-        # Кнопки
+        # НАЗВАНИЯ ЗАДАНИЙ
+        ttk.Label(settings_frame, text="Названия заданий (через запятую):").grid(row=row, column=0, sticky=tk.NW, pady=2)
+        names_frame = ttk.Frame(settings_frame)
+        names_frame.grid(row=row, column=1, sticky=tk.W, pady=2)
+        names_text = tk.Text(names_frame, height=5, width=35)
+        names_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        def edit_names_dialog():
+            total_str = problems_var.get().strip()
+            if not total_str or not total_str.isdigit():
+                messagebox.showerror("Ошибка", "Сначала укажите корректное количество заданий.")
+                return
+            total = int(total_str)
+            current_text = names_text.get("1.0", tk.END).strip()
+            names_list = [n.strip() for n in current_text.split(',') if n.strip()]
+            if len(names_list) < total:
+                names_list += [str(i) for i in range(len(names_list)+1, total+1)]
+            names_list = names_list[:total]
+
+            edit_win = tk.Toplevel(dialog)
+            edit_win.title("Редактирование названий заданий")
+            edit_win.geometry("400x500")
+            edit_win.transient(dialog)
+            edit_win.grab_set()
+
+            canvas_edit = tk.Canvas(edit_win, borderwidth=0)
+            scrollbar = ttk.Scrollbar(edit_win, orient="vertical", command=canvas_edit.yview)
+            scrollable_frame = ttk.Frame(canvas_edit)
+            scrollable_frame.bind("<Configure>", lambda e: canvas_edit.configure(scrollregion=canvas_edit.bbox("all")))
+            canvas_edit.create_window((0, 0), window=scrollable_frame, anchor="nw")
+            canvas_edit.configure(yscrollcommand=scrollbar.set)
+
+            entries = []
+            for i, name in enumerate(names_list, start=1):
+                frame = ttk.Frame(scrollable_frame)
+                frame.pack(fill=tk.X, padx=10, pady=2)
+                lbl = ttk.Label(frame, text=f"Задание {i}:", width=12)
+                lbl.pack(side=tk.LEFT)
+                entry = ttk.Entry(frame, width=30)
+                entry.insert(0, name)
+                entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+                entries.append(entry)
+
+            btn_frame_edit = ttk.Frame(edit_win)
+            btn_frame_edit.pack(pady=10)
+
+            def save_names():
+                new_names = []
+                for entry in entries:
+                    val = entry.get().strip()
+                    if not val:
+                        val = str(entries.index(entry)+1)
+                    new_names.append(val)
+                names_text.delete("1.0", tk.END)
+                names_text.insert(tk.END, ', '.join(new_names))
+                update_preview()
+                edit_win.destroy()
+
+            ttk.Button(btn_frame_edit, text="Сохранить", command=save_names).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame_edit, text="Отмена", command=edit_win.destroy).pack(side=tk.LEFT, padx=5)
+
+            canvas_edit.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+
+        edit_btn = ttk.Button(names_frame, text="✎ Редактировать", command=edit_names_dialog)
+        edit_btn.pack(side=tk.LEFT, padx=5)
+
+        default_names = ','.join(str(i) for i in range(1, 28))
+        names_text.insert(tk.END, default_names)
+        names_text.bind('<KeyRelease>', lambda e: update_preview())
+        row += 1
+
+        # ----- ФУНКЦИЯ ЗАГРУЗКИ ИЗ СОХРАНЁННЫХ -----
+        def load_from_storage():
+            recent = get_recent_templates()
+            if not recent:
+                messagebox.showinfo("Нет шаблонов", "У вас пока нет сохранённых шаблонов.")
+                return
+            
+            select_win = tk.Toplevel(dialog)
+            select_win.title("Выбор шаблона из библиотеки")
+            select_win.geometry("500x450")
+            select_win.transient(dialog)
+            select_win.grab_set()
+            
+            tk.Label(select_win, text="Выберите шаблон для загрузки в редактор:", font=("Arial", 12)).pack(pady=10)
+            
+            frame = ttk.Frame(select_win)
+            frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            scrollbar = ttk.Scrollbar(frame)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            
+            listbox = tk.Listbox(frame, yscrollcommand=scrollbar.set, font=("Arial", 10), height=10)
+            listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar.config(command=listbox.yview)
+            
+            template_map = {}
+            for template_id, info in recent:
+                created = info.get("created", "Unknown")[:19]
+                display_text = f"{info['name']} (создан: {created})"
+                listbox.insert(tk.END, display_text)
+                template_map[display_text] = template_id
+            
+            def on_select():
+                selection = listbox.curselection()
+                if not selection:
+                    return
+                display_text = listbox.get(selection[0])
+                template_id = template_map[display_text]
+                
+                scheme = load_template_from_storage(template_id)
+                if scheme:
+                    total = len(scheme['rates'])
+                    test = len([k for k in scheme['check_keys'] if k != 0])
+                    problems_var.set(str(total))
+                    test_problems_var.set(str(test))
+                    
+                    scores_text.delete("1.0", tk.END)
+                    scores_text.insert(tk.END, ','.join(map(str, scheme['rates'])))
+                    
+                    check_text.delete("1.0", tk.END)
+                    check_text.insert(tk.END, ','.join(map(str, scheme['check_keys'])))
+                    
+                    names_text.delete("1.0", tk.END)
+                    names = scheme.get('problems_names', [str(i) for i in range(1, total+1)])
+                    names_text.insert(tk.END, ', '.join(names))
+                    
+                    update_preview()
+                    select_win.destroy()
+                    messagebox.showinfo("Успех", f"Шаблон загружен в редактор")
+                else:
+                    messagebox.showerror("Ошибка", "Не удалось загрузить шаблон")
+            
+            ttk.Button(select_win, text="Загрузить в редактор", command=on_select).pack(pady=10)
+            ttk.Button(select_win, text="Отмена", command=select_win.destroy).pack(pady=5)
+
+        # ----- КНОПКИ УПРАВЛЕНИЯ (ГЛАВНОЕ - ОНИ ДОЛЖНЫ БЫТЬ ЗДЕСЬ) -----
         btn_frame = ttk.Frame(settings_frame)
         btn_frame.grid(row=row, column=0, columnspan=2, pady=10)
 
         def do_generate():
+            total_str = problems_var.get().strip()
+            test_str = test_problems_var.get().strip()
+            if not total_str or not test_str:
+                messagebox.showerror("Ошибка", "Заполните количество заданий")
+                return
+            try:
+                total = int(total_str)
+                test = int(test_str)
+            except:
+                messagebox.showerror("Ошибка", "Некорректное число заданий")
+                return
+
             if default_folder:
                 initial_dir = default_folder
                 initial_file = "blank_template.png"
@@ -731,8 +1189,6 @@ class BlankOCRApp:
             if not file_path:
                 return
             try:
-                total = problems_var.get()
-                test = test_problems_var.get()
                 fields_number = fields_number_var.get()
                 columns = columns_var.get()
                 rows = problems_in_column_var.get()
@@ -748,6 +1204,12 @@ class BlankOCRApp:
                     check_keys += [0] * (total - len(check_keys))
                 check_keys = check_keys[:total]
 
+                names_str = names_text.get("1.0", tk.END).strip()
+                problems_names = [n.strip() for n in names_str.split(',') if n.strip()]
+                if len(problems_names) < total:
+                    problems_names += [str(i) for i in range(len(problems_names)+1, total+1)]
+                problems_names = problems_names[:total]
+
                 generate_custom_template(
                     output_path=file_path,
                     title_text=title_var.get(),
@@ -758,22 +1220,41 @@ class BlankOCRApp:
                     problems_in_column=rows,
                     columns=columns,
                     fields_number=fields_number,
-                    problems_names=[str(i) for i in range(1, total+1)]
+                    problems_names=problems_names
                 )
                 messagebox.showinfo("Успех", f"Шаблон сохранён:\n{file_path}")
+                
+                answer = messagebox.askyesno(
+                    "Сохранить в библиотеку",
+                    "Сохранить этот шаблон в библиотеку для быстрого доступа?"
+                )
+                if answer:
+                    from tkinter import simpledialog
+                    template_name = simpledialog.askstring(
+                        "Название шаблона",
+                        "Введите название для шаблона:",
+                        parent=dialog
+                    )
+                    template_id = save_template_to_storage(file_path, template_name)
+                    if template_id:
+                        messagebox.showinfo("Успех", f"Шаблон сохранён в библиотеке")
+                
                 if default_folder:
                     self.set_current_path(default_folder)
                 dialog.destroy()
             except Exception as e:
                 messagebox.showerror("Ошибка", str(e))
 
+        # ВОТ ЗДЕСЬ СОЗДАЮТСЯ КНОПКИ - ПРОВЕРЬТЕ, ЧТО ОНИ ЕСТЬ
         ttk.Button(btn_frame, text="Обновить предпросмотр", command=update_preview).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Загрузить из сохранённых", command=load_from_storage).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Сгенерировать и сохранить", command=do_generate).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Отмена", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
 
-        # Инициализация (синхронизация и первое обновление)
-        refresh_scores_and_checks()
+        # Инициализация
+        update_names_field()
         dialog.after(100, update_preview)
+
     def on_close(self):
         if self.cap:
             self.cap.release()

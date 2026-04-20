@@ -125,16 +125,17 @@ def process_frame(frame, blank_scheme, current_path, sharpness=1):
 
     while True:
         key = cv2.waitKey(1) & 0xFF
-        if key == 27:
+        if key == 27:  # ESC - закрыть окно и вернуться
+            cv2.destroyWindow('Image')
             return None, sharpness, None
-        elif key == 13:
+        elif key == 13:  # Enter - продолжить распознавание
             break
-        elif key == 2:
+        elif key == 2:  # уменьшить резкость
             sharpness *= 0.9
             flag, processed_image = process_answer_sheet(frame, sharpness=sharpness)
             image_to_show = print_areas_on_blank(processed_image, blank_scheme) if flag else processed_image
             cv2.imshow('Image', image_to_show)
-        elif key == 3:
+        elif key == 3:  # увеличить резкость
             sharpness *= 1.111
             flag, processed_image = process_answer_sheet(frame, sharpness=sharpness)
             image_to_show = print_areas_on_blank(processed_image, blank_scheme) if flag else processed_image
@@ -155,10 +156,11 @@ def process_frame(frame, blank_scheme, current_path, sharpness=1):
 
     while True:
         key = cv2.waitKey(1) & 0xFF
-        if key == 27:
+        if key == 27:  # ESC - закрыть окно и вернуться
+            cv2.destroyWindow('Image')
             return None, sharpness, None
-        elif key == 13:
+        elif key == 13:  # Enter - сохранить результаты
             print('OK')
             save_dataset(result, digits)
+            cv2.destroyWindow('Image')
             return score, sharpness, result
-        

@@ -6,7 +6,7 @@ from preprocessing import preprocess_one_digit_area
 
 def read_preprocessed_blank(image, blank_scheme):
     # Загружаем модель с проверкой существования
-    model_path = 'model/mnist1.h5'
+    model_path = 'model/mnist_new.h5'
     if os.path.exists(model_path):
         model = keras.models.load_model(model_path)
     else:
@@ -38,7 +38,8 @@ def read_preprocessed_blank(image, blank_scheme):
             digit = preprocess_one_digit_area(digit, 42, 28, sharpness=1.1)
             areas_digits.append([digit_x, digit_y, w + mw, h + mh])
 
-            if digit.max() == 0 or model is None:
+            white_pixel_ratio = np.sum(digit > 128) / digit.size
+            if digit.max() == 0 or white_pixel_ratio < 0.02 or model is None:
                 recognized_digits.append(' ')
                 continue
 
@@ -46,7 +47,13 @@ def read_preprocessed_blank(image, blank_scheme):
             digit = np.expand_dims(digit, axis=-1)
             prediction = model.predict(np.array([digit]), verbose=0)
             recognized_digit = np.argmax(prediction)
-            recognized_digits.append(str(recognized_digit) if recognized_digit < 10 else ',')
+            confidence = np.max(prediction)
+
+            if confidence < 0.5:
+                recognized_digits.append(' ')
+            else:
+                recognized_digits.append(str(recognized_digit) if recognized_digit < 10 else ',')
+
         recognized_answers.append(recognized_digits)
         areas.append(areas_digits)
         digits_all.append(digits)

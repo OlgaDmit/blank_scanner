@@ -59,8 +59,10 @@ def load_commas(folder, num_samples, target_class, inv):
 #commas_train, commas_train_labels = load_commas('commas/train', 3000, 10)  # Пример: 1000 тренировочных запятых
 #commas_test, commas_test_labels = load_commas('commas/test', 200, 10)     # Пример: 200 тестовых запятых
 
-commas_train, commas_train_labels = load_commas('commas_new_6400/', 6000, 10, 0)  # Пример: 1000 тренировочных запятых
-commas_test, commas_test_labels = load_commas('commas_new_6400/', 832, 10, 1)     # Пример: 200 тестовых запятых
+import os
+commas_path = os.path.join(os.path.dirname(__file__), 'model', 'data_for_training_init', 'commas_new_6400')
+commas_train, commas_train_labels = load_commas(commas_path, 6000, 10, 0)  # Пример: 1000 тренировочных запятых
+commas_test, commas_test_labels = load_commas(commas_path, 832, 10, 1)     # Пример: 200 тестовых запятых
 
 # Объединяем с MNIST данными
 x_train = np.concatenate((x_train, commas_train))

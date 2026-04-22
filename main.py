@@ -10,6 +10,7 @@ from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
 
 # Импорт ваших модулей
+import tutorial
 from process_frame import process_frame
 from blank_reader import print_score_on_blank
 from blank_generator import generate_custom_template
@@ -164,11 +165,13 @@ def save_result(score):
         print(str(item[0]) + '\t', end='')
     print('', flush=True)
 
-def save_settings(path_arr, scaling, sharpness):
+def save_settings(path_arr, scaling, sharpness, dark_mode=False):
     x, y, w, h = scaling[:]
+    
     with open('.blank_ocr_config', 'w') as f:
         f.write(f'scaling: {x} {y} {w} {h}\n')
         f.write(f'sharpness: {sharpness}\n')
+        f.write(f'dark_mode: {dark_mode}\n')
         for line in path_arr:
             f.write(line + '\n')
 
@@ -210,6 +213,7 @@ def load_config():
     path_arr = []
     scaling = None
     sharpness = 1.0
+    dark_mode = False
     try:
         with open('.blank_ocr_config', 'r') as f:
             for line in f:
@@ -219,13 +223,15 @@ def load_config():
                         scaling = parts
                 elif line.startswith('sharpness'):
                     sharpness = float(line.split()[1])
+                elif line.startswith('dark_mode'):  # ADD THIS BLOCK
+                    dark_mode = line.split()[1].lower() == 'true'
                 else:
                     path = line.strip()
                     if os.path.isdir(path):
                         path_arr.append(path)
     except FileNotFoundError:
         pass
-    return path_arr, scaling, sharpness
+    return path_arr, scaling, sharpness, dark_mode
 
 def load_blank_scheme(current_path):
     # Ищем файл .set в папке
@@ -295,12 +301,18 @@ class BlankOCRApp:
         self.root.title("Распознавание бланков")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
+        self.bg_color = "#f0f0f0"      # Light background
+        self.fg_color = "#000000"      # Black text
+        self.btn_bg = "#e0e0e0"        # Light button
+        self.video_bg = "#000000"      # Video background (always dark)
+
         # --- загружаем сохранённые данные ---
-        self.path_arr, saved_scaling, self.sharpness = load_config()
-        if len(self.path_arr) > 10:
-            self.path_arr = self.path_arr[:10]
+        self.path_arr, saved_scaling, self.sharpness, saved_dark_mode = load_config()
+        self.dark_mode = False
         self.current_path = None
         self.blank_scheme = None
+        if len(self.path_arr) > 10:
+            self.path_arr = self.path_arr[:10]
 
         # --- параметры кадрирования ---
         self.x = 0
@@ -331,7 +343,32 @@ class BlankOCRApp:
         self.last_score = None
 
         # --- создание виджетов ---
-        self.video_label = tk.Label(root)
+        menubar = tk.Menu(root)
+        root.config(menu=menubar)
+
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Файл", menu=file_menu)
+        file_menu.add_command(label="Выход", command=self.on_close, accelerator="Esc")
+    
+         # View menu with theme toggle
+        view_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Вид", menu=view_menu)
+    
+        # Theme toggle with checkmark
+        self.theme_var = tk.BooleanVar(value=False)
+        view_menu.add_checkbutton(
+            label="Тёмная тема",
+            variable=self.theme_var,
+            command=self.toggle_theme
+        )
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label='Справка', menu=help_menu)
+        help_menu.add_command(label='Руководство пользователя', command=self.open_tutorial)
+        help_menu.add_command(label='Клавишы', command=self.open_shortcuts)
+        help_menu.add_command(label='Credits', command=self.open_credits)
+
+        self.video_label = tk.Label(root, bg='#000000')
         self.video_label.pack()
 
         control_frame = tk.Frame(root)
@@ -376,7 +413,82 @@ class BlankOCRApp:
 
         self.choose_initial_folder()
 
+        if saved_dark_mode:
+            self.toggle_theme()
+
         self.update_video()
+
+    def toggle_theme(self):
+        """Switch between light and dark mode"""
+        self.dark_mode = not self.dark_mode
+    
+        if self.dark_mode:
+            # Dark theme colors
+            self.bg_color = "#1e1e1e"      # Dark gray background
+            self.fg_color = "#ffffff"      # White text
+            self.btn_bg = "#3c3c3c"        # Dark button
+            menu_bg = "#2d2d2d"
+            menu_fg = "#ffffff"
+        else:
+            # Light theme colors
+            self.bg_color = "#f0f0f0"      # Light background
+            self.fg_color = "#000000"      # Black text
+            self.btn_bg = "#e0e0e0"        # Light button
+            menu_bg = "#f0f0f0"
+            menu_fg = "#000000"
+    
+    # Apply to root window
+        self.root.configure(bg=self.bg_color)
+    
+    # Apply to control frame
+        for widget in self.root.winfo_children():
+            self._apply_theme_to_widget(widget)
+    
+    # Update menu colors if menu exists
+        try:
+            self.root.tk.call('tk_setPalette', menu_bg)
+        except:
+            pass
+    
+    # Update folder label specifically
+        self.update_folder_label()
+
+        save_settings(self.path_arr, [self.x, self.y, self.w, self.h], self.sharpness, self.dark_mode)
+    
+
+    def _apply_theme_to_widget(self, widget):
+        """Recursively apply theme to a widget and its children"""
+        try:
+            widget_type = widget.winfo_class()
+        
+            if widget_type in ('Frame', 'TFrame', 'Labelframe', 'TLabelframe'):
+                widget.configure(bg=self.bg_color)
+            elif widget_type in ('Label', 'TLabel'):
+                widget.configure(bg=self.bg_color, fg=self.fg_color)
+            elif widget_type in ('Button', 'TButton'):
+                if widget != self.tutorial_btn:  # Keep tutorial button green
+                    widget.configure(bg=self.btn_bg, fg=self.fg_color)
+            elif widget_type in ('Entry', 'TEntry'):
+                widget.configure(bg=self.btn_bg, fg=self.fg_color, insertbackground=self.fg_color)
+            elif widget_type in ('Combobox', 'TCombobox'):
+                widget.configure(foreground=self.fg_color)
+            elif widget_type == 'Canvas':
+                widget.configure(bg=self.bg_color)
+        
+        # Recursively apply to children
+            for child in widget.winfo_children():
+                self._apply_theme_to_widget(child)
+        except:
+            pass  # Some widgets may not support these options
+
+    def open_tutorial(self):
+        tutorial.open_tutorial(self.root)
+
+    def open_shortcuts(self):
+        tutorial.open_shortcuts(self.root)
+
+    def open_credits(self):
+        tutorial.open_credits(self.root)
 
     def save_to_excel(self, recognized_answers, score):
         """
@@ -608,6 +720,8 @@ class BlankOCRApp:
         else:
             self.folder_label.config(text="Текущая папка: не выбрана")
 
+        self.folder_label.config(bg=self.bg_color, fg=self.fg_color)
+
     def update_combo_list(self):
         self.folder_combo['values'] = self.path_arr
         if self.current_path and self.current_path in self.path_arr:
@@ -684,7 +798,7 @@ class BlankOCRApp:
             messagebox.showerror("Ошибка", f"Не удалось загрузить схему из папки {self.current_path}.")
             return False
 
-        save_settings(self.path_arr, [self.x, self.y, self.w, self.h], self.sharpness)
+        save_settings(self.path_arr, [self.x, self.y, self.w, self.h], self.sharpness, self.dark_mode)
         return True
 
     def on_folder_select(self, event=None):
@@ -798,7 +912,7 @@ class BlankOCRApp:
         new_rect = scale_image(key, self.x, self.y, self.w, self.h,
                                self.original_sizes, velocity=10)
         self.x, self.y, self.w, self.h = new_rect
-        save_settings(self.path_arr, [self.x, self.y, self.w, self.h], self.sharpness)
+        save_settings(self.path_arr, [self.x, self.y, self.w, self.h], self.sharpness, self.dark_mode)
 
     def start_scan(self):
         if self.blank_scheme is None:
@@ -811,14 +925,19 @@ class BlankOCRApp:
             return
         
         cropped = frame[self.y:self.y+self.h, self.x:self.x+self.w]
+
+        result = process_frame(cropped, self.blank_scheme, self.current_path, self.sharpness)
         
-        # process_frame возвращает (score, sharpness, recognized_answers)
-        score, new_sharpness, recognized_answers = process_frame(
-            cropped, self.blank_scheme, self.current_path, self.sharpness
-        )
+        if result is None:
+            return
+        
+        score, new_sharpness, recognized_answers, status = result
+
+        if status == 'cancelled':
+            return
         
         self.sharpness = new_sharpness
-        save_settings(self.path_arr, [self.x, self.y, self.w, self.h], self.sharpness)
+        save_settings(self.path_arr, [self.x, self.y, self.w, self.h], self.sharpness, self.dark_mode)
         
         if score:
             self.last_recognized_answers = recognized_answers

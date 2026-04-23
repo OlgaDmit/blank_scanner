@@ -319,13 +319,13 @@ class BlankScannerApp:
         if not self.current_folder or not self.blank_scheme:
             messagebox.showwarning("Предупреждение!", "Сначала выберите рабочую папку со схемой!")
             return
-        
+
         from scan_window import ScanWindow
 
         config_data = {
-            'x': self.x, 'y': self.y, 'w': self.w, 'h': self.h, 
-            'sharpness': self.sharpness, 
-            'path_arr': self.path_arr, 
+            'x': self.x, 'y': self.y, 'w': self.w, 'h': self.h,
+            'sharpness': self.sharpness,
+            'path_arr': self.path_arr,
             'dark_mode': self.dark_mode
         }
 
@@ -334,11 +334,16 @@ class BlankScannerApp:
             self.last_recognized_answers = recognized_answers
             self.last_score = score
 
+            # Закрываем окно сканирования
+            if hasattr(self, 'scan_window') and self.scan_window:
+                self.scan_window.on_close()   # или .root.destroy()
+                self.scan_window = None
+
             from results_window import ResultsWindow
             if recognized_answers:
                 ResultsWindow(
                     self.root,
-                    score if score else [],  # Pass empty list if no score
+                    score if score else [],
                     recognized_answers,
                     self.current_path,
                     self.blank_scheme,
@@ -347,8 +352,11 @@ class BlankScannerApp:
             else:
                 messagebox.showwarning("Результат", "Ничего не распознано.")
 
-        ScanWindow(self.root, self.blank_scheme, self.current_path, config_data, 
-                   theme_colors=self.get_theme_colors(), on_scan_complete=on_scan_complete)
+        # Сохраняем ссылку на окно
+        self.scan_window = ScanWindow(
+            self.root, self.blank_scheme, self.current_path, config_data,
+            theme_colors=self.get_theme_colors(), on_scan_complete=on_scan_complete
+        )
     
     def load_image(self):
         if not self.current_folder or not self.blank_scheme:

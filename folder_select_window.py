@@ -114,77 +114,95 @@ class FolderSelectWindow:
             return True
 
     def choose_folder_dialog(self):
-    # Сначала спрашиваем, хочет ли пользователь выбрать из сохранённых шаблонов
-        answer = messagebox.askyesnocancel(
-            "Выбор рабочей папки",
-            "Как вы хотите выбрать рабочую папку?\n\n"
-            "• Да — выбрать шаблон из библиотеки и создать для него папку\n"
-            "• Нет — выбрать существующую папку с бланками\n"
-            "• Отмена — отменить"
-        )
+        """Окно выбора папки с тремя вариантами"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Выбор рабочей папки")
+        dialog.geometry("400x200")
+        dialog.transient(self.root)
+        dialog.grab_set()
 
-        if answer is None:
+        tk.Label(dialog, text="Как вы хотите выбрать рабочую папку?",
+                font=("Arial", 12)).pack(pady=20)
+
+        btn_frame = tk.Frame(dialog)
+        btn_frame.pack(pady=10)
+
+        def on_from_library():
+            dialog.destroy()
+            self.choose_from_library()
+
+        def on_existing_folder():
+            dialog.destroy()
+            self.choose_existing_folder()
+
+        tk.Button(btn_frame, text="📚 Выбрать шаблон из библиотеки",
+                command=on_from_library, width=30, height=2).pack(pady=5)
+        tk.Button(btn_frame, text="📁 Выбрать существующую папку",
+                command=on_existing_folder, width=30, height=2).pack(pady=5)
+        tk.Button(btn_frame, text="❌ Отмена",
+                command=dialog.destroy, width=30, height=1).pack(pady=5)
+
+        dialog.wait_window()
+
+    def choose_from_library(self):
+        """Выбор шаблона из библиотеки и создание новой папки"""
+        from templates_storage import get_recent_templates, copy_template_to_work_folder
+        recent = get_recent_templates()
+        if not recent:
+            messagebox.showinfo("Нет шаблонов", "У вас пока нет сохранённых шаблонов.\nСначала создайте шаблон.")
             return
-        elif answer:
-            # Выбор из сохранённых шаблонов
-            recent = get_recent_templates()
-            if not recent:
-                messagebox.showinfo("Нет шаблонов", "У вас пока нет сохранённых шаблонов.\nСначала создайте шаблон.")
+
+        select_win = tk.Toplevel(self.root)
+        select_win.title("Выбор шаблона из библиотеки")
+        select_win.geometry("500x450")
+        select_win.transient(self.root)
+        select_win.grab_set()
+
+        tk.Label(select_win, text="Выберите шаблон:", font=("Arial", 12)).pack(pady=10)
+
+        frame = ttk.Frame(select_win)
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        scrollbar = ttk.Scrollbar(frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        listbox = tk.Listbox(frame, yscrollcommand=scrollbar.set, font=("Arial", 10), height=10)
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=listbox.yview)
+
+        template_map = {}
+        for template_id, info in recent:
+            created = info.get("created", "Unknown")[:19]
+            display_text = f"{info['name']} (создан: {created})"
+            listbox.insert(tk.END, display_text)
+            template_map[display_text] = template_id
+
+        def on_select():
+            selection = listbox.curselection()
+            if not selection:
+                return
+            display_text = listbox.get(selection[0])
+            template_id = template_map[display_text]
+
+            target_folder = filedialog.askdirectory(
+                title="Выберите папку для создания рабочей области с этим шаблоном"
+            )
+            if not target_folder:
                 return
 
-            select_win = tk.Toplevel(self.root)
-            select_win.title("Выбор шаблона из библиотеки")
-            select_win.geometry("500x450")
-            select_win.transient(self.root)
-            select_win.grab_set()
+            success, msg = copy_template_to_work_folder(template_id, target_folder)
+            if success:
+                messagebox.showinfo("Успех", f"Шаблон скопирован в папку:\n{target_folder}")
+                self.set_current_path(target_folder)
+                select_win.destroy()
+            else:
+                messagebox.showerror("Ошибка", msg)
 
-            tk.Label(select_win, text="Выберите шаблон:", font=("Arial", 12)).pack(pady=10)
+        ttk.Button(select_win, text="Выбрать и скопировать в новую папку",
+                command=on_select).pack(pady=10)
+        ttk.Button(select_win, text="Отмена", command=select_win.destroy).pack(pady=5)
 
-            frame = ttk.Frame(select_win)
-            frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-            scrollbar = ttk.Scrollbar(frame)
-            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-            listbox = tk.Listbox(frame, yscrollcommand=scrollbar.set, font=("Arial", 10), height=10)
-            listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            scrollbar.config(command=listbox.yview)
-
-            # Храним соответствие между отображаемым текстом и ID
-            template_map = {}
-            for template_id, info in recent:
-                created = info.get("created", "Unknown")[:19]
-                display_text = f"{info['name']} (создан: {created})"
-                listbox.insert(tk.END, display_text)
-                template_map[display_text] = template_id
-
-            def on_select():
-                selection = listbox.curselection()
-                if not selection:
-                    return
-                display_text = listbox.get(selection[0])
-                template_id = template_map[display_text]
-
-                # Спрашиваем, куда скопировать шаблон
-                target_folder = filedialog.askdirectory(
-                    title="Выберите папку для создания рабочей области с этим шаблоном"
-                )
-                if not target_folder:
-                    return
-
-                # Копируем шаблон в выбранную папку
-                success, msg = copy_template_to_work_folder(template_id, target_folder)
-                if success:
-                    messagebox.showinfo("Успех", f"Шаблон скопирован в папку:\n{target_folder}")
-                    # Устанавливаем эту папку как рабочую
-                    self.set_current_path(target_folder)
-                    select_win.destroy()
-                else:
-                    messagebox.showerror("Ошибка", msg)
-
-            ttk.Button(select_win, text="Выбрать и скопировать в новую папку", command=on_select).pack(pady=10)
-            ttk.Button(select_win, text="Отмена", command=select_win.destroy).pack(pady=5)
-        else:
-            # Обычный выбор папки
-            new_path = filedialog.askdirectory(title="Выберите рабочую папку с бланками")
-            if new_path:
-                self.set_current_path(new_path)
+    def choose_existing_folder(self):
+        """Обычный выбор существующей папки с бланками"""
+        new_path = filedialog.askdirectory(title="Выберите рабочую папку с бланками")
+        if new_path:
+            self.set_current_path(new_path)

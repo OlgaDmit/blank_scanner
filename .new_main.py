@@ -12,13 +12,16 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 
 class BlankScannerApp:
-    """Main dashboard application"""
     
     def __init__(self, root):
         self.root = root
         self.root.title("Blank Scanner - Распознавание бланков")
-        self.root.geometry("700x700")
+        self.root.geometry("700x700+100+100")
         self.root.minsize(600, 600)
+
+        self.style = ttk.Style()
+        self.style.theme_use('clam')
+        self.style.configure("Dashboard.TButton", font=('Arial', 12), padding=20)
 
         # Load config
         self.path_arr, saved_scaling, self.sharpness, saved_dark_mode = load_config()
@@ -103,18 +106,10 @@ class BlankScannerApp:
         )
         self.folder_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
         
-        tk.Button(
+        ttk.Button(
             folder_frame,
             text="📁 Выбрать папку",
-            font=("Arial", 10),
-            command=self.select_folder,
-            bg=self.folder_btn_bg,
-            fg="white",
-            padx=15,
-            pady=5,
-            cursor="hand2",
-            relief=tk.RAISED,
-            borderwidth=1
+            command=self.select_folder
         ).pack(side=tk.RIGHT)
         
         # Main buttons grid
@@ -127,29 +122,22 @@ class BlankScannerApp:
         btn_frame.rowconfigure(0, weight=1)
         btn_frame.rowconfigure(1, weight=1)
         btn_frame.rowconfigure(2, weight=1)
+        btn_frame.rowconfigure(3, weight=1)
         
         # Button style function
         def create_dashboard_button(parent, text, command, row, col):
             frame = tk.Frame(parent, bg=self.bg_color)
             frame.grid(row=row, column=col, sticky="nsew", padx=10, pady=10)
             
-            btn = tk.Button(
+            btn = ttk.Button(
                 frame,
                 text=text,
-                font=("Arial", 12),
                 command=command,
-                bg=self.btn_bg,
-                fg="white",
-                padx=20,
-                pady=20,
-                cursor="hand2",
-                relief=tk.RAISED,
-                borderwidth=2
+                style="Dashboard.TButton"
             )
             btn.pack(fill=tk.BOTH, expand=True)
             return btn
         
-        # Row 0: Scan and Load
         self.scan_btn = create_dashboard_button(
             btn_frame,
             "📷 Начать сканирование\n(с камеры)",
@@ -164,34 +152,46 @@ class BlankScannerApp:
             row=0, col=1
         )
         
-        # Row 1: Train and Template
         self.train_btn = create_dashboard_button(
             btn_frame,
             "🤖 Обучить модель\n(на рукописных цифрах)",
             self.train_model,
             row=1, col=0
         )
+
+        self.review_btn = create_dashboard_button(
+            btn_frame,
+            "🔍 Просмотр данных\n(исправление меток)",
+            self.open_dataset_reviewer,
+            row=1, col=1
+        )
         
         self.template_btn = create_dashboard_button(
             btn_frame,
             "📝 Создать бланк\n(шаблон ответов)",
             self.create_template,
-            row=1, col=1
+            row=2, col=0
+        )
+
+        self.var_btn = create_dashboard_button(
+            btn_frame,
+            "📋 Редактор .var\n(ключи ответов)",
+            self.open_var_editor,
+            row=2, col=1  # Choose a spot!
         )
         
-        # Row 2: Tutorial and Credits
         self.tutorial_btn = create_dashboard_button(
             btn_frame,
             "📖 Руководство\nпользователя",
             self.show_tutorial,
-            row=2, col=0
+            row=3, col=0
         )
         
         self.credits_btn = create_dashboard_button(
             btn_frame,
             "ℹ️ О программе\nCredits",
             self.show_credits,
-            row=2, col=1
+            row=3, col=1
         )
         
         # Bottom bar with status and theme toggle
@@ -319,13 +319,13 @@ class BlankScannerApp:
         if not self.current_folder or not self.blank_scheme:
             messagebox.showwarning("Предупреждение!", "Сначала выберите рабочую папку со схемой!")
             return
-
+        
         from scan_window import ScanWindow
 
         config_data = {
-            'x': self.x, 'y': self.y, 'w': self.w, 'h': self.h,
-            'sharpness': self.sharpness,
-            'path_arr': self.path_arr,
+            'x': self.x, 'y': self.y, 'w': self.w, 'h': self.h, 
+            'sharpness': self.sharpness, 
+            'path_arr': self.path_arr, 
             'dark_mode': self.dark_mode
         }
 
@@ -334,16 +334,11 @@ class BlankScannerApp:
             self.last_recognized_answers = recognized_answers
             self.last_score = score
 
-            # Закрываем окно сканирования
-            if hasattr(self, 'scan_window') and self.scan_window:
-                self.scan_window.on_close()   # или .root.destroy()
-                self.scan_window = None
-
             from results_window import ResultsWindow
             if recognized_answers:
                 ResultsWindow(
                     self.root,
-                    score if score else [],
+                    score if score else [],  # Pass empty list if no score
                     recognized_answers,
                     self.current_path,
                     self.blank_scheme,
@@ -352,11 +347,8 @@ class BlankScannerApp:
             else:
                 messagebox.showwarning("Результат", "Ничего не распознано.")
 
-        # Сохраняем ссылку на окно
-        self.scan_window = ScanWindow(
-            self.root, self.blank_scheme, self.current_path, config_data,
-            theme_colors=self.get_theme_colors(), on_scan_complete=on_scan_complete
-        )
+        ScanWindow(self.root, self.blank_scheme, self.current_path, config_data, 
+                   theme_colors=self.get_theme_colors(), on_scan_complete=on_scan_complete)
     
     def load_image(self):
         if not self.current_folder or not self.blank_scheme:
@@ -427,9 +419,8 @@ class BlankScannerApp:
             messagebox.showwarning("Результат", "Ничего не распознано.")
     
     def train_model(self):
-        """Open model training"""
-        print("[DEBUG] train_model called")
-        messagebox.showinfo("Обучение", "Здесь будет обучение модели")
+        from train_window import TrainWindow
+        TrainWindow(self.root, theme_colors=self.get_theme_colors())
     
     def create_template(self):
         from template_window import TemplateWindow
@@ -446,6 +437,23 @@ class BlankScannerApp:
             theme_colors=self.get_theme_colors(),
             on_template_created=on_template_created
         )
+
+    def open_var_editor(self):
+        if not self.blank_scheme:
+            messagebox.showwarning("Предупреждение!", "Сначала выберите рабочую папку со схемой!")
+            return
+        
+        from var_editor_window import VarEditorWindow
+        VarEditorWindow(
+            self.root,
+            current_path=self.current_path,
+            blank_scheme=self.blank_scheme,
+            theme_colors=self.get_theme_colors()
+        )
+
+    def open_dataset_reviewer(self):
+        from dataset_reviewer import DatasetReviewer
+        DatasetReviewer(self.root, theme_colors=self.get_theme_colors())
     
     def show_credits(self):
         open_credits(self.root, self.get_theme_colors())

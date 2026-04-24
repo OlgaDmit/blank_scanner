@@ -64,14 +64,18 @@ commas_path = os.path.join(os.path.dirname(__file__), 'model', 'data_for_trainin
 commas_train, commas_train_labels = load_commas(commas_path, 6000, 10, 0)  # Пример: 1000 тренировочных запятых
 commas_test, commas_test_labels = load_commas(commas_path, 832, 10, 1)     # Пример: 200 тестовых запятых
 
+minus_path = os.path.join(os.path.dirname(__file__), 'minus_new_6400')
+minus_train, minus_train_labels = load_commas(minus_path, 6000, 11, 0)
+minus_test, minus_test_labels = load_commas(minus_path, 832, 11, 1)
+
 # Объединяем с MNIST данными
-x_train = np.concatenate((x_train, commas_train))
-y_train = np.concatenate((y_train, commas_train_labels))
-x_test = np.concatenate((x_test, commas_test))
-y_test = np.concatenate((y_test, commas_test_labels))
+x_train = np.concatenate((x_train, commas_train, minus_train))
+y_train = np.concatenate((y_train, commas_train_labels, minus_train_labels))
+x_test = np.concatenate((x_test, commas_test, minus_test))
+y_test = np.concatenate((y_test, commas_test_labels, minus_test_labels))
 
 #num_classes = 10
-num_classes = 11  # Теперь у нас 11 классов (10 цифр + запятые)
+num_classes = 12  # Теперь у нас 12 классов (10 цифр + запятые + минусы)
 
 # Решейп и нормализация
 x_train = x_train.reshape(x_train.shape[0], 28, 28, 1)

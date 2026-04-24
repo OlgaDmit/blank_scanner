@@ -52,7 +52,12 @@ def read_preprocessed_blank(image, blank_scheme):
             if confidence < 0.5:
                 recognized_digits.append(' ')
             else:
-                recognized_digits.append(str(recognized_digit) if recognized_digit < 10 else ',')
+                if recognized_digit < 10:
+                    recognized_digits.append(str(recognized_digit))
+                elif recognized_digit == 10:
+                    recognized_digits.append(',')
+                elif recognized_digit == 11:
+                    recognized_digits.append('-')
 
         recognized_answers.append(recognized_digits)
         areas.append(areas_digits)

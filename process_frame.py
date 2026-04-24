@@ -112,43 +112,82 @@ def point_capture(event, x, y, flags, params):
                     selected_cell[1] = j
                     final = redraw_with_highlight(image, result, areas, score, blank_scheme, selected_cell)
                     cv2.imshow('Image', final)
-                    
-                    while True:
-                        try:
-                            root = tk._default_root
-                            if root:
-                                root.update()
-                        except:
-                            pass
-                        
-                        try:
-                            if cv2.getWindowProperty('Image', cv2.WND_PROP_VISIBLE) < 1:
-                                return
-                        except:
-                            return
-                        
-                        key = cv2.waitKey(30) & 0xFF
-                        
-                        if key < 255:
-                            if (key >= ord('0') and key <= ord('9')) or key == ord(',') or key == ord(' '):
-                                result[i][j] = chr(key)
-                                checked = print_ans_on_blank(image, result, areas)
-                                new_score = check(result, blank_scheme, current_path)
-                                if new_score:
-                                    score.clear()
-                                    score.extend(new_score)
-                                    final = print_score_on_blank(checked, blank_scheme, score)
-                                else:
-                                    final = checked
-                                final = redraw_with_highlight(final, result, areas, score, blank_scheme, selected_cell)
-                                cv2.imshow('Image', final)
-                                return
-                            if key == 27:
-                                cv2.imshow('Image', image)
-                                return
-                            elif key == 13:
-                                cv2.imshow('Image', image)
-                                return
+                    return
+                            
+def move_selection(direction, selected_cell, areas):
+    i, j = selected_cell
+    
+    if direction == 'left':
+        if j > 0:
+            selected_cell[1] = j - 1
+            return True
+    elif direction == 'right':
+        if j < len(areas[i]) - 1:
+            selected_cell[1] = j + 1
+            return True
+    elif direction == 'up':
+        if i > 0:
+            selected_cell[0] = i - 1
+            if selected_cell[1] >= len(areas[selected_cell[0]]):
+                selected_cell[1] = len(areas[selected_cell[0]]) - 1
+            return True
+    elif direction == 'down':
+        new_i = i + 1
+        while new_i < len(areas) and len(areas[new_i]) == 0:
+            new_i += 1
+        if new_i < len(areas):
+            selected_cell[0] = new_i
+            if selected_cell[1] >= len(areas[selected_cell[0]]):
+                selected_cell[1] = len(areas[selected_cell[0]]) - 1
+            return True
+    return False
+
+def handle_editing_key(key, key_masked, selected_cell, areas, result, cutted_image, 
+                       score, blank_scheme, current_path, digits, window_name):
+    
+    # ARROW KEY NAVIGATION
+    arrow_map = {
+        2424832: 'left',
+        2555904: 'right',
+        2490368: 'up',
+        2621440: 'down'
+    }
+    
+    if key in arrow_map:
+        if move_selection(arrow_map[key], selected_cell, areas):
+            final = redraw_with_highlight(cutted_image, result, areas, score, blank_scheme, selected_cell)
+            cv2.imshow(window_name, final)
+        return 'continue'
+    
+    # DIGIT / COMMA / MINUS / SPACE
+    if (key_masked >= ord('0') and key_masked <= ord('9')) or key_masked == ord(',') or key_masked == ord('-') or key_masked == ord(' '):
+        i, j = selected_cell
+        result[i][j] = chr(key_masked)
+        checked = print_ans_on_blank(cutted_image, result, areas)
+        new_score = check(result, blank_scheme, current_path)
+        if new_score:
+            score.clear()
+            score.extend(new_score)
+            final = print_score_on_blank(checked, blank_scheme, score)
+        else:
+            final = checked
+        final = redraw_with_highlight(final, result, areas, score, blank_scheme, selected_cell)
+        cv2.imshow(window_name, final)
+        return 'continue'
+    
+    # ESC - Cancel
+    if key_masked == 27:
+        cv2.destroyWindow(window_name)
+        return 'cancel'
+    
+    # ENTER - Save
+    if key_masked == 13:
+        print('OK')
+        save_dataset(result, digits)
+        cv2.destroyWindow(window_name)
+        return 'save'
+    
+    return None
 
 def process_frame(frame, blank_scheme, current_path, sharpness=1):
     window_name = 'Image'
@@ -162,6 +201,8 @@ def process_frame(frame, blank_scheme, current_path, sharpness=1):
         image_to_show = processed_image
     
     cv2.imshow(window_name, image_to_show)
+    cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
+    cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 0)
 
     while True:
         try:
@@ -205,13 +246,6 @@ def process_frame(frame, blank_scheme, current_path, sharpness=1):
     # Track selected cell for arrows navigation
     global selected_cell
     selected_cell = [0, 0]
-    for i in range(len(result)):
-        for j in range(len(result[i])):
-            if result[i][j] != ' ':
-                selected_cell = [i, j]
-                break
-        if selected_cell != [0, 0]:
-            break
     
     if score:
         final = print_score_on_blank(checked, blank_scheme, score)
@@ -220,6 +254,10 @@ def process_frame(frame, blank_scheme, current_path, sharpness=1):
 
     final = redraw_with_highlight(final, result, areas, score, blank_scheme, selected_cell)
     cv2.imshow(window_name, final)
+    cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
+    cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 0)
+    for _ in range(5):
+        cv2.waitKey(1)
     cv2.setMouseCallback(window_name, point_capture, [cutted_image, result, score, areas, blank_scheme, current_path, selected_cell])
 
     while True:
@@ -241,70 +279,12 @@ def process_frame(frame, blank_scheme, current_path, sharpness=1):
         key = cv2.waitKeyEx(30)
         key_masked = key & 0xFF
         
-        # ARROW KEY NAVIGATION
-        if key == 2424832:  # Left arrow
-            i, j = selected_cell
-            if j > 0:
-                selected_cell[1] = j - 1
-                final = redraw_with_highlight(cutted_image, result, areas, score, blank_scheme, selected_cell)
-                cv2.imshow(window_name, final)
-        elif key == 2555904:  # Right arrow
-            i, j = selected_cell
-            if j < len(areas[i]) - 1:
-                selected_cell[1] = j + 1
-                final = redraw_with_highlight(cutted_image, result, areas, score, blank_scheme, selected_cell)
-                cv2.imshow(window_name, final)
-        elif key == 2490368:  # Up arrow
-            i, j = selected_cell
-            if i > 0:
-                selected_cell[0] = i - 1
-                if selected_cell[1] >= len(areas[selected_cell[0]]):
-                    selected_cell[1] = len(areas[selected_cell[0]]) - 1
-                final = redraw_with_highlight(cutted_image, result, areas, score, blank_scheme, selected_cell)
-                cv2.imshow(window_name, final)
-        elif key == 2621440:  # Down arrow
-            i, j = selected_cell
-            if i < len(areas) - 1:
-                selected_cell[0] = i + 1
-                if selected_cell[1] >= len(areas[selected_cell[0]]):
-                    selected_cell[1] = len(areas[selected_cell[0]]) - 1
-                final = redraw_with_highlight(cutted_image, result, areas, score, blank_scheme, selected_cell)
-                cv2.imshow(window_name, final)
-        
-        # DIGIT / COMMA / SPACE
-        elif key_masked >= ord('0') and key_masked <= ord('9'):
-            i, j = selected_cell
-            result[i][j] = chr(key_masked)
-            new_score = check(result, blank_scheme, current_path)
-            if new_score:
-                score.clear()
-                score.extend(new_score)
-            final = redraw_with_highlight(cutted_image, result, areas, score, blank_scheme, selected_cell)
-            cv2.imshow(window_name, final)
-        elif key_masked == ord(','):
-            i, j = selected_cell
-            result[i][j] = ','
-            new_score = check(result, blank_scheme, current_path)
-            if new_score:
-                score.clear()
-                score.extend(new_score)
-            final = redraw_with_highlight(cutted_image, result, areas, score, blank_scheme, selected_cell)
-            cv2.imshow(window_name, final)
-        elif key_masked == ord(' ') or key_masked == 8 or key_masked == 127:
-            i, j = selected_cell
-            result[i][j] = ' '
-            new_score = check(result, blank_scheme, current_path)
-            if new_score:
-                score.clear()
-                score.extend(new_score)
-            final = redraw_with_highlight(cutted_image, result, areas, score, blank_scheme, selected_cell)
-            cv2.imshow(window_name, final)
-        
-        elif key_masked == 27:  # ESC
-            cv2.destroyWindow(window_name)
-            return [None, sharpness, None, 'cancelled']
-        elif key_masked == 13:  # Enter
-            print('OK')
-            save_dataset(result, digits)
-            cv2.destroyWindow(window_name)
+        action = handle_editing_key(
+            key, key_masked, selected_cell, areas, result, cutted_image,
+            score, blank_scheme, current_path, digits, window_name
+        )
+
+        if action =='save':
             return [score, sharpness, result, 'success']
+        elif action == 'cancel':
+            return [None, sharpness, None, 'cancelled']

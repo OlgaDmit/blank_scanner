@@ -205,7 +205,7 @@ class TrainWindow:
             
             self.update_progress(60)
             
-            epochs = self.epochs_var.get()
+            epochs = 5
             
             for epoch in range(epochs):
                 self.update_status(f"Обучение... Эпоха {epoch + 1}/{epochs}")

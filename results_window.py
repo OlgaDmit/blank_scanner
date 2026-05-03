@@ -6,6 +6,11 @@ import csv
 from datetime import datetime
 from excel_saver import find_excel_file, open_workbook, save_workbook, find_variant_sheet
 from excel_saver import get_all_students, find_student_row, write_scores_to_sheet, get_sheet_by_name, get_all_sheets
+from google_sheets_saver import (
+    get_authenticated_service, load_google_sheet_link, save_google_sheet_link,
+    get_all_sheets, get_all_students, find_student_row, write_scores_to_sheet
+)
+import pyperclip
 
 class ResultsWindow:
 
@@ -109,8 +114,11 @@ class ResultsWindow:
             self.save_to_excel(recognized_answers, score)
         
         ttk.Button(btn_frame, text="Сохранить в Excel", command=save_to_excel_callback).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Сохранить в Google Sheets", command=self.save_to_google_sheets_callback).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Сохранить как файл", command=self.on_save_results).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Скопировать баллы", command=self.copy_scores_to_clipboard).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Закрыть (ESC)", command=self.result_win.destroy).pack(side=tk.LEFT, padx=5)
+        
         
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -233,6 +241,225 @@ class ResultsWindow:
         ttk.Button(btn_frame, text="Сохранить", command=do_save).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Отмена", command=dialog.destroy).pack(side=tk.LEFT, padx=5) 
 
+    def save_to_google_sheets_callback(self):
+        self.result_win.destroy()
+        self.save_to_google_sheets(self.recognized_answers, self.score)
+
+    def save_to_google_sheets(self, recognized_answers, score):
+        """Сохранить результаты в Google Sheets."""
+        if not self.current_path:
+            messagebox.showerror("Ошибка", "Не выбрана рабочая папка.")
+            return False
+
+        import re
+
+        # 1. Получить ссылку на Google Sheets из файла в рабочей папке
+        spreadsheet_ref, link_file = load_google_sheet_link(self.current_path)
+        if not spreadsheet_ref:
+            # Спрашиваем, хочет ли пользователь указать ссылку
+            answer = messagebox.askyesno(
+                "Ссылка не найдена",
+                "В рабочей папке нет файла со ссылкой на Google Sheets.\n"
+                "Хотите указать ссылку сейчас?"
+            )
+            if not answer:
+                return False
+            spreadsheet_ref = get_spreadsheet_id_from_user(self.root)
+            if not spreadsheet_ref:
+                return False
+            # Сохраняем ссылку в папку
+            save_google_sheet_link(self.current_path, spreadsheet_ref)
+        else:
+            # Используем найденную ссылку
+            pass
+
+        # 2. Аутентификация
+        service = get_authenticated_service(self.root)
+        if not service:
+            return False
+        # Извлекаем ID таблицы (если пользователь ввёл URL)
+        match = re.search(r'/d/([a-zA-Z0-9-_]+)', spreadsheet_ref)
+        spreadsheet_id = match.group(1) if match else spreadsheet_ref
+        # 3. Определяем номер варианта
+        variant_str = ''.join(recognized_answers[0]).strip()
+        variant_match = re.search(r'\d+', variant_str)
+        detected_variant = int(variant_match.group()) if variant_match else None
+
+        # 4. Получаем все листы
+        all_sheets = get_all_sheets(service, spreadsheet_id)
+        if not all_sheets:
+            messagebox.showerror("Ошибка", "Не удалось получить список листов.\nПроверьте доступ к таблице.")
+            return False
+
+        # 5. Выбираем лист (автоматически по варианту или вручную)
+        sheet = None
+        if detected_variant:
+            # ищем лист, содержащий номер варианта
+            for sheet_name in all_sheets:
+                if str(detected_variant) in sheet_name:
+                    sheet = sheet_name
+                    break
+        if sheet:
+            answer = messagebox.askyesno(
+                "Лист найден",
+                f"Обнаружен вариант {detected_variant}\n"
+                f"Будут использованы данные с листа: '{sheet}'\n\n"
+                "Продолжить с этим листом?"
+            )
+            if not answer:
+                sheet = None
+
+        if not sheet:
+            # диалог выбора листа
+            sheet_win = tk.Toplevel(self.root)
+            sheet_win.title("Выбор листа")
+            sheet_win.geometry("400x300")
+            sheet_win.transient(self.root)
+            sheet_win.grab_set()
+
+            tk.Label(sheet_win, text="Выберите лист с результатами:", font=("Arial", 12)).pack(pady=10)
+            frame = ttk.Frame(sheet_win)
+            frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            scrollbar = ttk.Scrollbar(frame)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            listbox = tk.Listbox(frame, yscrollcommand=scrollbar.set, font=("Arial", 10))
+            listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar.config(command=listbox.yview)
+            for name in all_sheets:
+                listbox.insert(tk.END, name)
+
+            selected = [None]
+            def on_select():
+                sel = listbox.curselection()
+                if sel:
+                    selected[0] = listbox.get(sel[0])
+                    sheet_win.destroy()
+                else:
+                    messagebox.showwarning("Выбор", "Пожалуйста, выберите лист.")
+            ttk.Button(sheet_win, text="Выбрать", command=on_select).pack(pady=10)
+            ttk.Button(sheet_win, text="Отмена", command=sheet_win.destroy).pack(pady=5)
+
+            self.root.wait_window(sheet_win)
+            if not selected[0]:
+                return False
+            sheet = selected[0]
+
+        # 6. Список учеников
+        students = get_all_students(service, spreadsheet_id, sheet)
+        if not students:
+            messagebox.showerror("Ошибка", "На листе нет учеников (столбец A).\nДолжны быть начиная с 3 строки.")
+            return False
+
+        # 7. Диалог выбора ученика
+        student_win = tk.Toplevel(self.root)
+        student_win.title("Выберите ученика")
+        student_win.geometry("400x400")
+        student_win.transient(self.root)
+        student_win.grab_set()
+
+        tk.Label(student_win, text="Выберите ученика из списка:", font=("Arial", 12)).pack(pady=10)
+        search_frame = ttk.Frame(student_win)
+        search_frame.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(search_frame, text="Поиск:").pack(side=tk.LEFT)
+        search_entry = ttk.Entry(search_frame)
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+        frame = ttk.Frame(student_win)
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        scrollbar = ttk.Scrollbar(frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        listbox = tk.Listbox(frame, yscrollcommand=scrollbar.set, font=("Arial", 10))
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=listbox.yview)
+
+        for student in students:
+            listbox.insert(tk.END, student)
+
+        def filter_students(event=None):
+            text = search_entry.get().strip().lower()
+            listbox.delete(0, tk.END)
+            for s in students:
+                if text in s.lower():
+                    listbox.insert(tk.END, s)
+        search_entry.bind('<KeyRelease>', filter_students)
+
+        selected_student = [None]
+        def on_select():
+            sel = listbox.curselection()
+            if sel:
+                selected_student[0] = listbox.get(sel[0])
+                student_win.destroy()
+            else:
+                messagebox.showwarning("Выбор", "Выберите ученика.")
+        def on_double_click(event):
+            on_select()
+        listbox.bind('<Double-Button-1>', on_double_click)
+        ttk.Button(student_win, text="Выбрать", command=on_select).pack(pady=10)
+        ttk.Button(student_win, text="Отмена", command=student_win.destroy).pack(pady=5)
+
+        self.root.wait_window(student_win)
+        if not selected_student[0]:
+            return False
+
+        # 8. Найти строку ученика
+        row_idx = find_student_row(service, spreadsheet_id, sheet, selected_student[0])
+        if not row_idx:
+            answer = messagebox.askyesno(
+                "Ученик не найден",
+                f"Ученик '{selected_student[0]}' не найден.\nХотите добавить его в конец списка?"
+            )
+            if answer:
+                # Получить последнюю строку с данными
+                # Для простоты – добавим в конец через запись в столбец A
+                range_name = f"{sheet}!A{len(students)+3}"
+                body = {'values': [[selected_student[0]]]}
+                try:
+                    service.spreadsheets().values().update(
+                        spreadsheetId=spreadsheet_id,
+                        range=range_name,
+                        valueInputOption='RAW',
+                        body=body
+                    ).execute()
+                    row_idx = len(students) + 3
+                    messagebox.showinfo("Добавлен", f"Ученик добавлен в строку {row_idx}")
+                except HttpError as e:
+                    messagebox.showerror("Ошибка", f"Не удалось добавить ученика:\n{e}")
+                    return False
+            else:
+                return False
+
+        # 9. Формируем список баллов (27 значений)
+        points_list = [p for p, _ in score]
+        # Дополняем до 27, если меньше
+        if len(points_list) < 27:
+            points_list += [0] * (27 - len(points_list))
+        # 10. Запись в таблицу
+        success = write_scores_to_sheet(service, spreadsheet_id, sheet, row_idx, points_list)
+        if success:
+            messagebox.showinfo("Успех",
+                f"Результаты сохранены в Google Sheets\n"
+                f"Лист: {sheet}\nУченик: {selected_student[0]}\n"
+                f"Сумма баллов: {sum(points_list)}")
+            return True
+            return True
+        else:
+            messagebox.showerror("Ошибка", "Не удалось записать данные в таблицу.")
+            return False
+    def copy_scores_to_clipboard(self):
+        """Копирует только баллы в буфер обмена одной строкой через табуляцию."""
+        if not self.score:
+            messagebox.showwarning("Нет данных", "Нет результатов для копирования.")
+            return
+        
+        # Формируем строку: только баллы через табуляцию
+        points_list = [str(points) for points, _ in self.score]
+        output = "\t".join(points_list)
+        
+        pyperclip.copy(output)
+        
+        # Показываем небольшой фрагмент для подтверждения
+        preview = output[:100] + ('...' if len(output) > 100 else '')
+        messagebox.showinfo("Скопировано", f"Баллы скопированы в буфер обмена.\n\n{preview}")
     def save_to_excel(self, recognized_answers, score):
         """
         Сохраняет результаты в Excel-файл.

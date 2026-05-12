@@ -1,4 +1,5 @@
 import cv2
+import platform
 import sys
 import tkinter as tk
 from PIL import Image, ImageTk
@@ -30,7 +31,10 @@ class ScanWindow:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # --- захват камеры (исправлено для Windows) ---
-        self.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        if platform.system() == 'Windows':
+            self.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        else:
+            self.cap = cv2.VideoCapture(0)
         if not self.cap.isOpened():
             messagebox.showerror("Ошибка", "Не удалось открыть камеру")
             sys.exit(1)
@@ -117,53 +121,35 @@ class ScanWindow:
         for widget in self.root.winfo_children():
             if isinstance(widget, ttk.Button):
                 widget.config(state='disabled')
-        
-        # Store result
-        result_holder = [None]
-        
-        def do_process():
-            """Run process_frame in separate thread"""
-            try:
-                result = process_frame(cropped, self.blank_scheme, self.current_path, self.sharpness)
-                result_holder[0] = result
-            except Exception as e:
-                print(f"[ERROR] Process frame failed: {e}")
-                result_holder[0] = None
-        
-        import threading
-        thread = threading.Thread(target=do_process, daemon=True)
-        thread.start()
-        
-        def check_result():
-            """Check if processing is complete"""
-            if thread.is_alive():
-                # Still processing, check again in 100ms
-                self.root.after(100, check_result)
-                return
-            
-            # Re-enable buttons
-            for widget in self.root.winfo_children():
-                if isinstance(widget, ttk.Button):
-                    widget.config(state='normal')
-            
-            result = result_holder[0]
-            if result is None:
-                return
-            
-            score, new_sharpness, recognized_answers, status = result
-            
-            if status == 'cancelled':
-                return
-            
-            self.sharpness = new_sharpness
-            save_settings(self.path_arr, [self.x, self.y, self.w, self.h], self.sharpness, self.dark_mode)
 
-            
-            if recognized_answers and self.on_scan_complete:
-                self.on_scan_complete(score, new_sharpness, recognized_answers)
+        use_threading = (platform.system() != 'Darwin')
+        if use_threading:
+            result_holder = [None]
         
-        # Start checking for result
-        self.root.after(100, check_result)
+            def do_process():
+                try:
+                    result = process_frame(cropped, self.blank_scheme, self.current_path, self.sharpness)
+                    result_holder[0] = result
+                except Exception as e:
+                    print(f"[ERROR] Process frame failed: {e}")
+                    result_holder[0] = None
+        
+            import threading
+            thread = threading.Thread(target=do_process, daemon=True)
+            thread.start()
+        
+            def check_result():
+                if thread.is_alive():
+                    self.root.after(100, check_result)
+                    return
+                self.handle_scan_result(result_holder[0])
+            
+            self.root.after(100, check_result)
+        
+        else:
+            result = process_frame(cropped, self.blank_scheme, self.current_path, self.sharpness)
+            self.handle_scan_result(result)
+
 
     def is_scaling_valid(self, scaling):
         x, y, w, h = scaling
@@ -171,6 +157,26 @@ class ScanWindow:
                 0 <= y < self.original_sizes[0] and
                 0 < w <= self.original_sizes[1] - x and
                 0 < h <= self.original_sizes[0] - y)
+
+    def handle_scan_result(self, result):
+        for widget in self.root.winfo_children():
+            if isinstance(widget, ttk.Button):
+                widget.config(state='normal')
+
+        if result is None:
+            return
+        
+        score, new_sharpness, recognized_answers, status = result
+    
+        if status == 'cancelled':
+            return
+    
+        self.sharpness = new_sharpness
+        save_settings(self.path_arr, [self.x, self.y, self.w, self.h], self.sharpness, self.dark_mode)
+
+        if recognized_answers and self.on_scan_complete:
+            self.on_scan_complete(score, new_sharpness, recognized_answers)
+
 
 def scale_image(key, x, y, w, h, original_sizes, velocity=10):
     if key == 'Up' and y > 0:

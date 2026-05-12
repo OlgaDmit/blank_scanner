@@ -145,7 +145,8 @@ def move_selection(direction, selected_cell, areas):
 def handle_editing_key(key, key_masked, selected_cell, areas, result, cutted_image, 
                        score, blank_scheme, current_path, digits, window_name):
     
-    # ARROW KEY NAVIGATION
+    arrow_detected = None
+    
     arrow_map = {
         2424832: 'left',
         2555904: 'right',
@@ -154,7 +155,20 @@ def handle_editing_key(key, key_masked, selected_cell, areas, result, cutted_ima
     }
     
     if key in arrow_map:
-        if move_selection(arrow_map[key], selected_cell, areas):
+        arrow_detected = arrow_map[key]
+    
+    if arrow_detected is None:
+        mac_arrow_map = {
+            2: 'left',    
+            3: 'right',   
+            0: 'up',      
+            1: 'down'     
+        }
+        if key > 100000 and key_masked in mac_arrow_map:
+            arrow_detected = mac_arrow_map[key_masked]
+    
+    if arrow_detected:
+        if move_selection(arrow_detected, selected_cell, areas):
             final = redraw_with_highlight(cutted_image, result, areas, score, blank_scheme, selected_cell)
             cv2.imshow(window_name, final)
         return 'continue'
@@ -203,6 +217,8 @@ def process_frame(frame, blank_scheme, current_path, sharpness=1):
     cv2.imshow(window_name, image_to_show)
     cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
     cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 0)
+    for _ in range(10):
+        cv2.waitKey(1)
 
     while True:
         try:
@@ -254,11 +270,16 @@ def process_frame(frame, blank_scheme, current_path, sharpness=1):
 
     final = redraw_with_highlight(final, result, areas, score, blank_scheme, selected_cell)
     cv2.imshow(window_name, final)
+
+    cv2.createTrackbar('Empty %', window_name, 2, 10, lambda x: None)
+
     cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
     cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 0)
-    for _ in range(5):
+    for _ in range(10):
         cv2.waitKey(1)
     cv2.setMouseCallback(window_name, point_capture, [cutted_image, result, score, areas, blank_scheme, current_path, selected_cell])
+
+    current_threshold = 0.02
 
     while True:
         try:
@@ -276,8 +297,39 @@ def process_frame(frame, blank_scheme, current_path, sharpness=1):
             cv2.destroyAllWindows()
             return [None, sharpness, None, 'cancelled']
         
-        key = cv2.waitKeyEx(30)
+        key = cv2.waitKeyEx(10)
         key_masked = key & 0xFF
+
+        new_threshold = cv2.getTrackbarPos('Empty %', window_name) / 100.0
+        if new_threshold != current_threshold and new_threshold > 0:
+            current_threshold = new_threshold
+            
+            cutted_image, result, areas, digits = read_preprocessed_blank(
+                processed_image, blank_scheme, empty_threshold=current_threshold
+            )
+            
+            original_result = []
+            for row in result:
+                original_result.append(list(row))
+            
+            selected_cell = [0, 0]
+            for i in range(len(result)):
+                for j in range(len(result[i])):
+                    if result[i][j] != ' ':
+                        selected_cell = [i, j]
+                        break
+                if selected_cell != [0, 0]:
+                    break
+            
+            checked = print_ans_on_blank(cutted_image, result, areas)
+            score = check(result, blank_scheme, current_path)
+            if score:
+                final = print_score_on_blank(checked, blank_scheme, score)
+            else:
+                final = checked
+            final = redraw_with_highlight(final, result, areas, score, blank_scheme, selected_cell)
+            cv2.imshow(window_name, final)
+            continue
         
         action = handle_editing_key(
             key, key_masked, selected_cell, areas, result, cutted_image,

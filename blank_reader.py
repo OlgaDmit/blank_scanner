@@ -4,7 +4,7 @@ import os
 from tensorflow import keras
 from preprocessing import preprocess_one_digit_area
 
-def read_preprocessed_blank(image, blank_scheme):
+def read_preprocessed_blank(image, blank_scheme, empty_threshold=0.02):
     # Загружаем модель с проверкой существования
     model_path = 'model/mnist_new.h5'
     if os.path.exists(model_path):
@@ -39,7 +39,7 @@ def read_preprocessed_blank(image, blank_scheme):
             areas_digits.append([digit_x, digit_y, w + mw, h + mh])
 
             white_pixel_ratio = np.sum(digit > 128) / digit.size
-            if digit.max() == 0 or white_pixel_ratio < 0.02 or model is None:
+            if digit.max() == 0 or white_pixel_ratio < empty_threshold or model is None:
                 recognized_digits.append(' ')
                 continue
 
